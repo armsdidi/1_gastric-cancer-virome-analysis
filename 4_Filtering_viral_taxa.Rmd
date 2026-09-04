@@ -1,5 +1,5 @@
 ---
-title: "2_filtering_viral_taxa"
+title: "2_Filtering_viral_taxa"
 author: Diego Pereira
 format: html
 toc: true
