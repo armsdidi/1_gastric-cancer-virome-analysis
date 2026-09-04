@@ -1,0 +1,370 @@
+---
+title: "3_Viral_composition"
+author: Diego Pereira
+format: html
+toc: true
+toc-depth: 3
+embed-resources: true
+number-sections: true
+page-layout: full
+fontsize: 12pt
+mainfont: Arial
+editor: visual
+editor_options: 
+  chunk_output_type: console
+chunk_output_type: console
+---
+
+# Loading the packages
+
+```{r message=FALSE, warning=FALSE}
+library(dplyr)
+library(tibble)
+library(readxl)
+library(ggplot2)
+library(colorspace)
+library(gridExtra)
+library(grid)
+library(circlize)
+library(ggvenn)
+library(ComplexHeatmap)
+```
+
+# Loading the data
+
+```{r message=FALSE, warning=FALSE}
+# Viral abundance data
+virus_tab = read_xlsx("virus_tab.xlsx", col_names = T)
+virus_tab = column_to_rownames(virus_tab, "Taxon")
+
+# Clinicopathological data
+sampleTable = read_xlsx("clinical_data.xlsx")
+sampleTable = sampleTable[sampleTable$samples_diego %in% 
+                          colnames(virus_tab), ]
+
+# Viral classification data
+virus_hosp = read_xlsx("virus_hosp.xlsx", col_names = T)
+```
+
+# Viral composition
+
+## Hierarchical classification of viral composition
+
+```{r message=FALSE, warning=FALSE, fig.width=12, fig.height=12}
+# Preparing the data
+df = virus_hosp %>%
+  count(Virus_Group, Genome_Type, Taxon, name = "n")
+
+# Totals by level
+lvl1 = df %>%
+  group_by(Virus_Group) %>%
+  summarise(n = sum(n), .groups = "drop")
+lvl2 = df %>%
+  group_by(Virus_Group, Genome_Type) %>%
+  summarise(n = sum(n), .groups = "drop")
+lvl3 = df
+
+# Ordering
+lvl3 = lvl3 %>%
+  arrange(Virus_Group, Genome_Type, desc(n))
+lvl2 = lvl2 %>%
+  arrange(Virus_Group, Genome_Type)
+
+# Cumulative coordinates
+lvl2 = lvl2 %>%
+  arrange(Virus_Group, Genome_Type) %>%
+  group_by(Virus_Group) %>%
+  mutate(xmin = cumsum(lag(n, default = 0)), xmax = cumsum(n)) %>%
+  ungroup()
+lvl3 = lvl3 %>%
+  arrange(Virus_Group, Genome_Type, desc(n)) %>%
+  group_by(Virus_Group) %>%
+  mutate(xmin = cumsum(lag(n, default = 0)),xmax = cumsum(n)) %>%
+  ungroup()
+
+# Defining the colors
+base_colors = c("Bacteriophages" = "#3E7C93", 
+                "Eukaryotic viruses" = "orange4")
+adjust_color <- function(color, genome){
+  if(genome == "dsDNA") return(lighten(color, 0.2))
+  if(genome == "ssDNA") return(lighten(color, 0.25))
+  if(genome == "ssRNA") return(lighten(color, 0.3))
+  return(color)
+}
+
+# Initializing the circos plot
+circos.clear()
+circos.par(gap.degree = 0, 
+           track.margin = c(0, 0), 
+           cell.padding = c(0, 0, 0, 0))
+circos.initialize(factors = lvl1$Virus_Group, 
+                  xlim = cbind(rep(0, nrow(lvl1)), lvl1$n))
+
+# Track 1 (Outer) → Taxon
+circos.trackPlotRegion(
+  ylim = c(0, 1),
+  track.height = 0.3,
+  panel.fun = function(x, y) {
+    sector = get.cell.meta.data("sector.index")
+    sub <- lvl3 %>% filter(Virus_Group == sector)
+    
+    for(i in 1:nrow(sub)){
+      
+      xstart = sub$xmin[i]
+      xend   = sub$xmax[i]
+      genome = sub$Genome_Type[i]
+      genus  = sub$Taxon[i]
+      col = adjust_color(base_colors[sector], genome)
+      circos.rect(xstart, 0, xend, 1, col = col, border = NA)
+      
+      if((xend - xstart) > max(sub$n) * 0.05){
+        circos.text((xstart + xend)/2, 0.5, genus,
+                    facing = "clockwise",
+                    niceFacing = TRUE,
+                    cex = 0.6,
+                    col = "white")}}},
+  bg.border = NA)
+
+# Track 2 (Middle) → Genome_Type
+circos.trackPlotRegion(
+  ylim = c(0, 1),
+    panel.fun = function(x, y) {
+    sector = get.cell.meta.data("sector.index")
+    sub <- lvl2 %>% filter(Virus_Group == sector)
+    
+    for(i in 1:nrow(sub)){
+      
+      xstart = sub$xmin[i]
+      xend   = sub$xmax[i]
+      genome = sub$Genome_Type[i]
+      col = adjust_color(base_colors[sector], genome)
+      circos.rect(xstart, 0, xend, 1,
+                  col = col, border = "white")
+      circos.text((xstart + xend)/2, 0.5, genome,
+                  facing = "inside",
+                  niceFacing = TRUE,
+                  cex = 0.8,
+                  col = "white")}},
+  bg.border = NA)
+
+# Track 3 (Inner) → Virus_Group
+circos.trackPlotRegion(
+  ylim = c(0, 1),
+  panel.fun = function(x, y) {
+    sector = get.cell.meta.data("sector.index")
+    xlim = get.cell.meta.data("xlim")
+    circos.rect(xlim[1], 0, xlim[2], 1,
+                col = base_colors[sector],
+                border = NA)
+    circos.text(mean(xlim), 0.5, sector,
+                facing = "outside",
+                niceFacing = TRUE,
+                cex = 1,
+                col = "white")},
+  bg.border = NA)
+```
+
+## Distribution of viruses by viral group and genome type
+
+```{r message=FALSE, warning=FALSE, fig.width=12, fig.height=8}
+# Calculating absolute and relative frequencies of viral groups
+freq_group = virus_hosp %>%
+  count(Virus_Group, name = "n") %>%
+  mutate(percent = (n / sum(n)) * 100)
+
+# Calculating absolute and relative frequencies of genome types
+freq_genome = virus_hosp %>%
+  count(Genome_Type, name = "n") %>%
+  mutate(percent = (n / sum(n)) * 100)
+
+# Viral group barplot
+p_group = ggplot(freq_group, aes(x = Virus_Group, y = percent, fill = Virus_Group)) +
+  geom_col(width = 0.9) + 
+  scale_fill_manual(values = c("Bacteriophages" = "#3E7C93", 
+                               "Eukaryotic viruses" = "orange4")) + 
+  scale_y_continuous(limits = c(0, 100)) +
+  labs(x = "Virus_Group", y = "Frequency (%)", fill = "Virus_Group") +
+  geom_text(aes(label = sprintf("%.1f%%", percent)),
+            vjust = -0.5, size = 3.5) +
+  theme_classic() +
+  theme(panel.grid = element_blank(),
+        legend.title = element_text(size = 12, face = "bold"), 
+        legend.position = "none", 
+        strip.text = element_blank(), 
+        axis.text.x = element_text(size = 10), 
+        axis.text.y = element_text(colour = "black", size = 10), 
+        axis.title.x = element_text(size = 10), 
+        axis.title.y = element_text(size = 10))
+
+# Genome type barplot
+p_genome = ggplot(freq_genome, aes(x = Genome_Type, y = percent, fill = Genome_Type)) +
+  geom_col(width = 0.9) + 
+  scale_fill_manual(values = c("DNA" = "#0868AC", 
+                               "RNA" = "#A50F15")) + 
+  scale_y_continuous(limits = c(0, 100)) +
+  labs(x = "Genome_Type", y = "Frequency (%)", fill = "Genome_Type") +
+  geom_text(aes(label = sprintf("%.1f%%", percent)),
+            vjust = -0.5, size = 3.5) +
+  theme_classic() +
+  theme(panel.grid = element_blank(),
+        legend.title = element_text(size = 12, face = "bold"), 
+        legend.position = "none", 
+        strip.text = element_blank(), 
+        axis.text.x = element_text(size = 10), 
+        axis.text.y = element_text(colour = "black", size = 10), 
+        axis.title.x = element_text(size = 10), 
+        axis.title.y = element_text(size = 10))
+
+# Barplots
+grid.arrange(p_group, p_genome, ncol = 2)
+```
+
+## Venn diagram
+
+```{r message=FALSE, warning=FALSE, fig.width=12, fig.height=8}
+# Creating metadata containing only tissue information
+metadata = data.frame(Samples = sampleTable$samples_diego,
+                      Tissue = sampleTable$Tissue)
+
+# Merging the abundance table with the metadata
+virus_tab_2 = as.data.frame(t(virus_tab))
+virus_tab_2$Samples = row.names(virus_tab_2)
+virus_tab_2 = merge(virus_tab_2, metadata, by.x = "Samples")
+
+# Separating the GC group
+virus_tab_GC = filter(virus_tab_2, Tissue == "GC")
+rownames(virus_tab_GC) = virus_tab_GC$Samples
+virus_tab_GC = select(virus_tab_GC, -Samples, -Tissue)
+
+# Separating the NT group
+virus_tab_NT = filter(virus_tab_2, Tissue == "NT")
+rownames(virus_tab_NT) = virus_tab_NT$Samples
+virus_tab_NT = select(virus_tab_NT, -Samples, -Tissue)
+
+# Obtaining the taxa present in each group and creating a list
+GC_taxons = colnames(virus_tab_GC)[colSums(virus_tab_GC) > 0]
+NT_taxons = colnames(virus_tab_NT)[colSums(virus_tab_NT) > 0]
+list_taxons = list("GC" = GC_taxons, "NT" = NT_taxons)
+
+# Venn diagram
+venn_plot = ggvenn(list_taxons, 
+       fill_color = c("#67000D","#2B7A78"),
+       stroke_color = NA, 
+       stroke_size = 0.5,
+       fill_alpha = 0.8,
+       text_size = ,                                    
+       text_color = "white",                                
+       set_name_size = 6,                             
+       set_name_color = "black")
+print(venn_plot)
+```
+
+## Overall relative abundance pattern
+
+```{r message=FALSE, warning=FALSE, fig.width=14, fig.height=10}
+# Preparing and transposing the abundance matrix
+virus_tab_T <- virus_tab_2 %>%
+  filter(Tissue %in% c("GC", "NT")) %>%
+  select(-Tissue) %>%
+  column_to_rownames("Samples")
+virus_tab_T <- as.matrix(virus_tab_T)   # samples x viruses
+
+# GC and NT tissue metadata
+metadata <- metadata %>%
+  filter(Samples %in% rownames(virus_tab_T)) %>%
+  arrange(match(Samples, rownames(virus_tab_T)))
+virus_tab_T <- virus_tab_T[metadata$Samples, ]
+
+# Virus information aligned with the columns
+virus_info <- virus_hosp[match(colnames(virus_tab_T), virus_hosp$Taxon), ]
+virus_info$Virus_Group <- as.character(virus_info$Virus_Group)
+virus_info$Genome_Type <- as.character(virus_info$Genome_Type)
+
+# Log10 transformation
+virus_tab_T <- log10(virus_tab_T + 1e-2)
+
+# Abundance range colors
+col_fun <- colorRamp2(
+  c(-2, -1, 0, 2),
+  c("#FFFFFF", "#FDD0A2", "#E34A33", "#A50F15"))
+
+# Side annotation (Tissue) - rows
+row_ha <- rowAnnotation(
+  Tissue = metadata$Tissue,
+  col = list(Tissue = c("GC" = "#67000D", "NT" = "#2B7A78")),
+  show_annotation_name = FALSE,
+  show_legend = FALSE)
+
+# Top annotation (Virus_Group and Genome_Type) - columns
+col_ha <- HeatmapAnnotation(
+  Virus_Group = virus_info$Virus_Group,
+  Genome_Type = virus_info$Genome_Type,
+  col = list(
+    Virus_Group = c("Bacteriophages" = "#3E7C93",
+                    "Eukaryotic viruses" = "orange4"),
+    Genome_Type = c("DNA" = "#0868AC",
+                    "RNA" = "#A50F15")),
+  show_annotation_name = FALSE,
+  show_legend = FALSE)
+
+# Splits (without mixing annotations)
+row_split <- metadata$Tissue
+col_split <- interaction(virus_info$Virus_Group, virus_info$Genome_Type, drop = TRUE)
+
+# Heatmap
+ht <- Heatmap(
+  virus_tab_T,
+  name = "Abundance",
+  col = col_fun,
+  top_annotation = col_ha,
+  left_annotation = row_ha,
+  show_heatmap_legend = FALSE,
+  show_row_names = FALSE,
+  show_column_names = TRUE,
+  column_names_side = "bottom",
+  column_names_rot = 45,
+  column_names_gp = gpar(fontsize = 9, fontface = "italic"),
+  cluster_rows = FALSE,
+  cluster_columns = FALSE,
+  row_split = row_split,
+  column_split = col_split,
+  column_title = NULL,
+  row_title = NULL,
+  border = TRUE)
+
+# Legends (4 stacked)
+lgd_tissue <- Legend(
+  title = "Tissue",
+  at = c("GC","NT"),
+  legend_gp = gpar(fill = c("#67000D", "#2B7A78")))
+
+lgd_group <- Legend(
+  title = "Virus_Group",
+  at = c("Bacteriophages","Eukaryotic viruses"),
+  legend_gp = gpar(fill = c("#3E7C93", "orange4")))
+
+lgd_genome <- Legend(
+  title = "Genome_Type",
+  at = c("DNA","RNA"),
+  legend_gp = gpar(fill = c("#0868AC","#A50F15")))
+
+lgd_heatmap <- Legend(
+  col_fun = col_fun,
+  title = "Abundance")
+
+lgd_combined <- packLegend(
+  lgd_tissue,
+  lgd_group,
+  lgd_genome,
+  lgd_heatmap,
+  direction = "vertical",
+  gap = unit(3, "mm"))
+
+# Plotting the heatmap
+draw(ht, 
+     heatmap_legend_side = "right",
+     annotation_legend_side = "right",
+     show_heatmap_legend = TRUE,
+     show_annotation_legend = TRUE,
+     annotation_legend_list = list(lgd_combined))
+```

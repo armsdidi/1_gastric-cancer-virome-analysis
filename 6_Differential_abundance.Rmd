@@ -1,0 +1,615 @@
+---
+title: "6_Differential_abundance"
+author: Diego Pereira
+format: html
+toc: true
+toc-depth: 3
+embed-resources: true
+number-sections: true
+page-layout: full
+fontsize: 12pt
+mainfont: Arial
+editor: visual
+editor_options: 
+  chunk_output_type: console
+chunk_output_type: console
+---
+
+# Loading the packages
+
+```{r message=FALSE, warning=FALSE}
+library(dplyr)
+library(tibble)
+library(readxl)
+library(ggplot2)
+library(phyloseq)
+library(microbiomeMarker)
+library(circlize)
+library(scales)
+```
+
+# Loading the data
+
+```{r message=FALSE, warning=FALSE}
+# Viral abundance data
+virus_tab = read_xlsx("virus_tab.xlsx", col_names = T)
+virus_tab = column_to_rownames(virus_tab, "Taxon")
+
+# Clinicopathological data
+sampleTable = read_xlsx("clinical_data.xlsx")
+sampleTable = sampleTable[sampleTable$samples_diego %in% 
+                          colnames(virus_tab), ]
+```
+
+# Differential abundance (LEfSe)
+
+## Tissue type
+
+```{r message=FALSE, warning=FALSE, fig.width=12, fig.height=10}
+# Creating the phyloseq object
+OTU = otu_table(virus_tab, taxa_are_rows = TRUE)
+SAMPLE = sample_data(sampleTable)
+row.names(SAMPLE) = SAMPLE$samples_diego
+ps = phyloseq(OTU, SAMPLE)
+
+# Subsetting GC and NT only and removing genera with zero reads
+ps_T = subset_samples(ps, Tissue %in% c("GC", "NT"))
+ps_T = prune_taxa(taxa_sums(ps_T) > 0, ps_T)
+
+# Normalizing to relative abundance and extracting the transposed abundance matrix
+ps_rel_T = transform_sample_counts(ps_T, function(x) x / sum(x))
+
+# Creating a dummy tax_table
+tax_dummy = matrix(taxa_names(ps_T), ncol = 1, dimnames = list(taxa_names(ps_T), "Genus"))
+tax_dummy = tax_table(tax_dummy)
+
+# Adding to the phyloseq object
+ps_T = phyloseq(otu_table(ps_T), sample_data(ps_T), tax_dummy)
+
+# Running LEfSe
+lefse_res = run_lefse(
+  ps_T,
+  group = "Tissue",
+  norm = "CPM",
+  kw_cutoff = 0.05,
+  lda_cutoff = 2.5)
+
+# Transforming the results into a table and converting to a dataframe
+lefse_table = marker_table(lefse_res)
+lefse_df_T = lefse_table@.Data
+lefse_df_T = as.data.frame(lefse_df_T)
+
+# Correcting column names
+colnames(lefse_df_T) = c("feature", 
+                         "enrich_group", 
+                         "ef_lda", 
+                         "pvalue", 
+                         "padj")
+
+# Correcting genus names
+lefse_df_T$feature = sub("^g_", "", lefse_df_T$feature)
+lefse_df_T$feature = sub("^_", "", lefse_df_T$feature)
+
+# Defining the desired group order
+lefse_df_T = lefse_df_T %>%
+  mutate(enrich_group = factor(enrich_group, levels = c("GC", "NT"))) %>%
+  arrange(enrich_group, desc(ef_lda))
+
+# Creating the genus order
+custom_order = rev(lefse_df_T$feature)
+
+# Applying the order to the dataframe
+lefse_df_T$feature = factor(lefse_df_T$feature, levels = custom_order)
+
+# LDA dotplot
+LDA_T = ggplot(lefse_df_T, aes(x = ef_lda, y = feature, color = enrich_group)) +
+  geom_point(size = 3) +
+  geom_segment(aes(x = 0, xend = ef_lda, y = feature, yend = feature),
+               linewidth = 1, alpha = 1) +
+  scale_color_manual(values = c("GC" = "#67000D", "NT" = "#2B7A78"),
+                     labels = c("GC" = "Enriched in GC",
+                                "NT" = "Enriched in NT")) +
+  labs(x = "LDA score (log10)", y = "", color = "Tissue") +
+  theme_minimal() +
+  theme(legend.title = element_text(size = 12, face = "bold"),
+    legend.position = "right",
+    axis.text.x = element_text(size = 10),
+    axis.text.y = element_text(colour = "black", size = 10, face = "italic"),
+    axis.title.x = element_text(size = 10),
+    axis.title.y = element_text(size = 10))
+print(LDA_T)
+
+# LDA barplot
+LDA_T_bar = ggplot(lefse_df_T, aes(x = ef_lda, y = feature, fill = enrich_group)) +
+  geom_col(width = 0.8, alpha = 0.9) +
+  scale_fill_manual(values = c("GC" = "#67000D", "NT" = "#2B7A78"),
+                    labels = c("GC" = "Enriched in GC",
+                               "NT" = "Enriched in NT")) +
+  labs(x = "LDA score (log10)", y = "", fill = "Tissue") +
+  theme_minimal() +
+  theme(legend.title = element_text(size = 12, face = "bold"),
+    legend.position = "right",
+    axis.text.x = element_text(size = 10),
+    axis.text.y = element_text(colour = "black", size = 10, face = "italic"),
+    axis.title.x = element_text(size = 10),
+    axis.title.y = element_text(size = 10))
+print(LDA_T_bar)
+```
+
+### Relative abundance of the main viruses
+
+```{r message=FALSE, warning=FALSE, fig.width=12, fig.height=8}
+# Selecting the 12 genera with the highest LDA values by tissue
+top_virus = c("Gorganvirus","Lymphocryptovirus","Cytomegalovirus","Alphapapillomavirus",
+                 "Luchadorvirus","Backyardiganvirus","Jeilongvirus","Friunavirus")
+
+# Filtering the genera
+ps_top_virus = prune_taxa(taxa_names(ps_rel_T) %in% top_virus, ps_rel_T)
+
+# Transforming into a long-format dataframe
+df_top_virus = psmelt(ps_top_virus)
+df_top_virus = df_top_virus %>%
+  mutate(OTU = factor(OTU, levels = top_virus),
+         Tissue = factor(Tissue, levels = c("GC","NT")))
+
+# Boxplot
+p_top_virus = ggplot(df_top_virus, aes(x = Tissue, y = Abundance)) + 
+  geom_boxplot(aes(fill = Tissue, color = Tissue), size = 1, alpha = 0.8, outlier.shape = NA) +
+  stat_boxplot(aes(color = Tissue), geom = "errorbar", linewidth = 1, size = 1) +
+  geom_jitter(color = "#08306B", width = 0.1, size = 2, alpha = 1) +
+  scale_color_manual(values = c("GC" = "#67000D", "NT" = "#2B7A78")) +
+  scale_fill_manual(values = c("GC" = "#67000D", "NT" = "#2B7A78")) +
+  facet_wrap(~ OTU, scales = "free_y", ncol = 4) +
+  scale_y_log10() +
+  theme_bw() +
+  labs(x = "", y = "Relative abundance") +
+  theme(
+    panel.grid = element_blank(),
+    legend.position = "right",
+    legend.title = element_text(colour = "black", face = "bold", size = 12),
+    axis.text.x = element_blank(),
+    axis.text.y = element_text(size = 10),
+    strip.text.x = element_text(colour = "black", face = "bold.italic", size = 10),
+    strip.background = element_rect(fill = "white", colour = "black"))
+print(p_top_virus)
+```
+
+## Lauren histological subtypes
+
+```{r message=FALSE, warning=FALSE, fig.width=12, fig.height=8}
+# Subsetting only samples with Lauren data
+ps_lauren = subset_samples(ps_T, Lauren %in% c("Intestinal", "Diffuse"))
+
+# Removing genera with zero reads
+ps_lauren = prune_taxa(taxa_sums(ps_lauren) > 0, ps_lauren)
+
+# Creating a dummy tax_table
+tax_dummy = matrix(taxa_names(ps_lauren), ncol = 1, dimnames = list(taxa_names(ps_lauren), "Genus"))
+tax_dummy = tax_table(tax_dummy)
+
+# Adding to the phyloseq object
+ps_lauren = phyloseq(otu_table(ps_lauren), sample_data(ps_lauren), tax_dummy)
+
+# Running LEfSe
+lefse_res = run_lefse(
+  ps_lauren,
+  group = "Lauren",
+  norm = "CPM",
+  kw_cutoff = 0.05,
+  lda_cutoff = 2)
+
+# Transforming the results into a table and converting to a dataframe
+lefse_table = marker_table(lefse_res)
+lefse_df_lauren = lefse_table@.Data
+lefse_df_lauren = as.data.frame(lefse_df_lauren)
+
+# Correcting column names
+colnames(lefse_df_lauren) = c("feature", 
+                         "enrich_group", 
+                         "ef_lda", 
+                         "pvalue", 
+                         "padj")
+
+# Correcting genus names
+lefse_df_lauren$feature = sub("^g_", "", lefse_df_lauren$feature)
+lefse_df_lauren$feature = sub("^_", "", lefse_df_lauren$feature)
+
+# Defining the desired group order
+lefse_df_lauren = lefse_df_lauren %>%
+  mutate(enrich_group = factor(enrich_group, levels = c("Intestinal", "Diffuse"))) %>%
+  arrange(enrich_group, desc(ef_lda))
+
+# Creating the genus order
+custom_order = rev(lefse_df_lauren$feature)
+
+# Applying the order to the dataframe
+lefse_df_lauren$feature = factor(lefse_df_lauren$feature, levels = custom_order)
+
+# LDA dotplot
+LDA_lauren = ggplot(lefse_df_lauren,aes(x = ef_lda, y = feature, color = enrich_group)) +
+  geom_point(size = 3) +
+  geom_segment(aes(x = 0, xend = ef_lda, y = feature, yend = feature),
+               linewidth = 1, alpha = 1) +
+  scale_color_manual(values = c("Intestinal" = "#3E7C93", "Diffuse" = "orange4"), 
+                    labels = c("Intestinal" = "Enriched in Intestinal", 
+                               "Diffuse" = "Enriched in Diffuse")) +
+  labs(x = "LDA score (log10)", y = "", color = "Lauren") +
+  theme_minimal() +
+  theme(legend.title = element_text(size = 12, face = "bold"), 
+        legend.position = "right", 
+        strip.text = element_blank(), 
+        axis.text.x = element_text(size = 10), 
+        axis.text.y = element_text(colour = "black", size = 10, face = "italic"), 
+        axis.title.x = element_text(size = 10), 
+        axis.title.y = element_text(size = 10))
+print(LDA_lauren)
+
+# LDA barplot
+LDA_lauren_bar = ggplot(lefse_df_lauren, aes(x = ef_lda, y = feature, fill = enrich_group)) +
+  geom_col(width = 0.8, alpha = 0.9) +
+  scale_fill_manual(values = c("Intestinal" = "#3E7C93", "Diffuse" = "orange4"), 
+                    labels = c("Intestinal" = "Enriched in Intestinal", 
+                               "Diffuse" = "Enriched in Diffuse")) +
+  labs(x = "LDA score (log10)", y = "", fill = "Lauren") +
+  theme_minimal() +
+  theme(legend.title = element_text(size = 12, face = "bold"),
+    legend.position = "right",
+    axis.text.x = element_text(size = 10),
+    axis.text.y = element_text(colour = "black", size = 10, face = "italic"),
+    axis.title.x = element_text(size = 10),
+    axis.title.y = element_text(size = 10))
+print(LDA_lauren_bar)
+```
+
+## Neoadjuvant chemotherapy
+
+```{r fig.height=8, fig.width=12, message=FALSE, warning=FALSE}
+# Subsetting only samples with neoadjuvant treatment data
+ps_neo = subset_samples(ps_T, Neoadjuvant %in% c("Treated", "Untreated"))
+
+# Removing genera with zero reads
+ps_neo = prune_taxa(taxa_sums(ps_neo) > 0, ps_neo)
+
+# Creating a dummy tax_table
+tax_dummy = matrix(taxa_names(ps_neo), ncol = 1, dimnames = list(taxa_names(ps_neo), "Genus"))
+tax_dummy = tax_table(tax_dummy)
+
+# Adding to the phyloseq object
+ps_neo = phyloseq(otu_table(ps_neo), sample_data(ps_neo), tax_dummy)
+
+# Running LEfSe
+lefse_res = run_lefse(
+  ps_neo,
+  group = "Neoadjuvant",
+  norm = "CPM",
+  kw_cutoff = 0.05,
+  lda_cutoff = 2)
+
+# Transforming the results into a table and converting to a dataframe
+lefse_table = marker_table(lefse_res)
+lefse_df_neo = lefse_table@.Data
+lefse_df_neo = as.data.frame(lefse_df_neo)
+
+# Correcting column names
+colnames(lefse_df_neo) = c("feature", 
+                         "enrich_group", 
+                         "ef_lda", 
+                         "pvalue", 
+                         "padj")
+
+# Correcting genus names
+lefse_df_neo$feature = sub("^g_", "", lefse_df_neo$feature)
+lefse_df_neo$feature = sub("^_", "", lefse_df_neo$feature)
+
+# Defining the desired group order
+lefse_df_neo = lefse_df_neo %>%
+  mutate(enrich_group = factor(enrich_group, levels = c("Treated", "Untreated"))) %>%
+  arrange(enrich_group, desc(ef_lda))
+
+# Creating the genus order
+custom_order = rev(lefse_df_neo$feature)
+
+# Applying the order to the dataframe
+lefse_df_neo$feature = factor(lefse_df_neo$feature, levels = custom_order)
+
+# LDA dotplot
+LDA_neo = ggplot(lefse_df_neo,aes(x = ef_lda, y = feature, colour = enrich_group)) +
+  geom_point(size = 3) +
+  geom_segment(aes(x = 0, xend = ef_lda, y = feature, yend = feature),
+               linewidth = 1, alpha = 1) + 
+  scale_color_manual(values = c("Treated" = "#0868AC", "Untreated" = "#A50F15"), 
+                    labels = c("Treated" = "Enriched in Treated", 
+                               "Diffuse" = "Enriched in Untreated")) +
+  labs(x = "LDA score (log10)", y = "", color = "Neoadjuvant") +
+  theme_minimal() +
+  theme(legend.title = element_text(size = 12, face = "bold"), 
+        legend.position = "right", 
+        strip.text = element_blank(), 
+        axis.text.x = element_text(size = 10), 
+        axis.text.y = element_text(colour = "black", size = 10, face = "italic"), 
+        axis.title.x = element_text(size = 10), 
+        axis.title.y = element_text(size = 10))
+print(LDA_neo)
+
+# LDA barplot
+LDA_neo_bar = ggplot(lefse_df_neo, aes(x = ef_lda, y = feature, fill = enrich_group)) +
+  geom_col(width = 0.8, alpha = 0.9) +
+  scale_fill_manual(values = c("Treated" = "#0868AC", "Untreated" = "#A50F15"), 
+                    labels = c("Treated" = "Enriched in Treated", 
+                               "Diffuse" = "Enriched in Untreated")) +
+  labs(x = "LDA score (log10)", y = "", fill = "Neoadjuvant") +
+  theme_minimal() +
+  theme(legend.title = element_text(size = 12, face = "bold"),
+    legend.position = "right",
+    axis.text.x = element_text(size = 10),
+    axis.text.y = element_text(colour = "black", size = 10, face = "italic"),
+    axis.title.x = element_text(size = 10),
+    axis.title.y = element_text(size = 10))
+print(LDA_neo_bar)
+```
+
+## Tumor location
+
+```{r message=FALSE, warning=FALSE, fig.width=12, fig.height=8}
+# Subsetting only samples with tumor location data
+ps_site = subset_samples(ps_T, Tumor_site %in% c("Cardia", "Non-Cardia"))
+
+# Removing genera with zero reads
+ps_site = prune_taxa(taxa_sums(ps_site) > 0, ps_site)
+
+# Creating a dummy tax_table
+tax_dummy = matrix(taxa_names(ps_site), ncol = 1, dimnames = list(taxa_names(ps_site), "Genus"))
+tax_dummy = tax_table(tax_dummy)
+
+# Adding to the phyloseq object
+ps_site = phyloseq(otu_table(ps_site), sample_data(ps_site), tax_dummy)
+
+# Running LEfSe
+lefse_res = run_lefse(
+  ps_site,
+  group = "Tumor_site",
+  norm = "CPM",
+  kw_cutoff = 0.05,
+  lda_cutoff = 2)
+
+# Transforming the results into a table and converting to a dataframe
+lefse_table = marker_table(lefse_res)
+lefse_df_site = lefse_table@.Data
+lefse_df_site = as.data.frame(lefse_df_site)
+
+# Correcting column names
+colnames(lefse_df_site) = c("feature", 
+                         "enrich_group", 
+                         "ef_lda", 
+                         "pvalue", 
+                         "padj")
+
+# Correcting genus names
+lefse_df_site$feature = sub("^g_", "", lefse_df_site$feature)
+lefse_df_site$feature = sub("^_", "", lefse_df_site$feature)
+
+# Defining the desired group order
+lefse_df_site = lefse_df_site %>%
+  mutate(enrich_group = factor(enrich_group, levels = c("Cardia", "Non-Cardia"))) %>%
+  arrange(enrich_group, desc(ef_lda))
+
+# Creating the genus order
+custom_order = rev(lefse_df_site$feature)
+
+# Applying the order to the dataframe
+lefse_df_site$feature = factor(lefse_df_site$feature, levels = custom_order)
+
+# LDA dotplot
+LDA_site = ggplot(lefse_df_site, aes(x = ef_lda, y = feature, colour = enrich_group)) +
+  geom_point(size = 3) +
+  geom_segment(aes(x = 0, xend = ef_lda, y = feature, yend = feature),
+               linewidth = 1, alpha = 1) + 
+  scale_color_manual(values = c("Cardia" = "#B45309", "Non-Cardia" = "#006D2C"), 
+                    labels = c("Cardia" = "Enriched in Cardia", 
+                               "Non-Cardia" = "Enriched in Non-Cardia")) +
+  labs(x = "LDA score (log10)", y = "", color = "Tumor_site") +
+  theme_minimal() +
+  theme(legend.title = element_text(size = 12, face = "bold"), 
+        legend.position = "right", 
+        strip.text = element_blank(), 
+        axis.text.x = element_text(size = 10), 
+        axis.text.y = element_text(colour = "black", size = 10, face = "italic"), 
+        axis.title.x = element_text(size = 10), 
+        axis.title.y = element_text(size = 10))
+print(LDA_site)
+
+# LDA barplot
+LDA_site_bar = ggplot(lefse_df_site, aes(x = ef_lda, y = feature, fill = enrich_group)) +
+  geom_col(width = 0.8, alpha = 0.9) +
+  scale_fill_manual(values = c("Cardia" = "#B45309", "Non-Cardia" = "#006D2C"), 
+                    labels = c("Cardia" = "Enriched in Cardia", 
+                               "Non-Cardia" = "Enriched in Non-Cardia")) +
+  labs(x = "LDA score (log10)", y = "", fill = "Tumor_site") +
+  theme_minimal() +
+  theme(legend.title = element_text(size = 12, face = "bold"),
+    legend.position = "right",
+    axis.text.x = element_text(size = 10),
+    axis.text.y = element_text(colour = "black", size = 10, face = "italic"),
+    axis.title.x = element_text(size = 10),
+    axis.title.y = element_text(size = 10))
+print(LDA_site_bar)
+```
+
+## Clinical staging (cTNM)
+
+```{r message=FALSE, warning=FALSE, fig.width=12, fig.height=8}
+# Subsetting only samples with TNM data
+ps_TNM = subset_samples(ps_T, TNM %in% c("I", "II", "III", "IV"))
+
+# Removing genera with zero reads
+ps_TNM = prune_taxa(taxa_sums(ps_TNM) > 0, ps_TNM)
+
+# Creating a dummy tax_table
+tax_dummy = matrix(taxa_names(ps_TNM), ncol = 1, dimnames = list(taxa_names(ps_TNM), "Genus"))
+tax_dummy = tax_table(tax_dummy)
+
+# Adding to the phyloseq object
+ps_TNM = phyloseq(otu_table(ps_TNM), sample_data(ps_TNM), tax_dummy)
+
+# Running LEfSe
+lefse_res = run_lefse(
+  ps_TNM,
+  group = "TNM",
+  norm = "CPM",
+  kw_cutoff = 0.05,
+  lda_cutoff = 2)
+
+# Transforming the results into a table and converting to a dataframe
+lefse_table = marker_table(lefse_res)
+lefse_df_TNM = lefse_table@.Data
+lefse_df_TNM = as.data.frame(lefse_df_TNM)
+
+# Correcting column names
+colnames(lefse_df_TNM) = c("feature", 
+                         "enrich_group", 
+                         "ef_lda", 
+                         "pvalue", 
+                         "padj")
+
+# Correcting genus names
+lefse_df_TNM$feature = sub("^g_", "", lefse_df_TNM$feature)
+lefse_df_TNM$feature = sub("^_", "", lefse_df_TNM$feature)
+
+# Defining the desired group order
+lefse_df_TNM = lefse_df_TNM %>%
+  mutate(enrich_group = factor(enrich_group, levels = c("I", "II", "III", "IV"))) %>%
+  arrange(enrich_group, desc(ef_lda))
+
+# Creating the genus order
+custom_order = rev(lefse_df_TNM$feature)
+
+# Applying the order to the dataframe
+lefse_df_TNM$feature = factor(lefse_df_TNM$feature, levels = custom_order)
+
+# LDA dotplot
+LDA_TNM = ggplot(lefse_df_TNM,aes(x = ef_lda, y = feature, colour = enrich_group)) +
+  geom_point(size = 3) +
+  geom_segment(aes(x = 0, xend = ef_lda, y = feature, yend = feature),
+               linewidth = 1, alpha = 1) + 
+  scale_color_manual(values = c("I" = "#5E2B97", "II" = "#084081", 
+                               "III" = "#E6B85C","IV" = "#4E8216"), 
+                    labels = c("I" = "Enriched in I", "II" = "Enriched in II", 
+                               "III" = "Enriched in III", "IV" = "Enriched in IV")) +
+  labs(x = "LDA score (log10)", y = "", color = "TNM") +
+  theme_minimal() +
+  theme(legend.title = element_text(size = 12, face = "bold"), 
+        legend.position = "right", 
+        strip.text = element_blank(), 
+        axis.text.x = element_text(size = 10), 
+        axis.text.y = element_text(colour = "black", size = 10, face = "italic"), 
+        axis.title.x = element_text(size = 10), 
+        axis.title.y = element_text(size = 10))
+print(LDA_TNM)
+
+# LDA barplot
+LDA_TNM_bar = ggplot(lefse_df_TNM, aes(x = ef_lda, y = feature, fill = enrich_group)) +
+  geom_col(width = 0.8, alpha = 0.9) +
+  scale_fill_manual(values = c("I" = "#5E2B97", "II" = "#084081", 
+                               "III" = "#E6B85C","IV" = "#4E8216"), 
+                    labels = c("I" = "Enriched in I", "II" = "Enriched in II", 
+                               "III" = "Enriched in III", "IV" = "Enriched in IV")) +
+  labs(x = "LDA score (log10)", y = "", fill = "TNM") +
+  theme_minimal() +
+  theme(legend.title = element_text(size = 12, face = "bold"),
+    legend.position = "right",
+    axis.text.x = element_text(size = 10),
+    axis.text.y = element_text(colour = "black", size = 10, face = "italic"),
+    axis.title.x = element_text(size = 10),
+    axis.title.y = element_text(size = 10))
+print(LDA_TNM_bar)
+```
+
+## Overall LDA (Chord Diagram)
+
+```{r message=FALSE, warning=FALSE, fig.width=12, fig.height=12}
+# Standardizing the LEfSe dataframes
+lefse_df_T$variable = "Tissue"
+lefse_df_lauren$variable = "Lauren"
+lefse_df_neo$variable = "Neoadjuvant"
+lefse_df_site$variable = "Tumor_site"
+lefse_df_TNM$variable = "TNM"
+
+# Combining the results
+lefse_all = bind_rows(
+    lefse_df_T,
+    lefse_df_lauren,
+    lefse_df_neo,
+    lefse_df_site,
+    lefse_df_TNM)
+
+# Creating a links dataframe for the Circos plot
+links = lefse_all %>%
+  select(enrich_group, feature, ef_lda) %>%
+  rename(Genera = feature,
+         weight = ef_lda)
+
+# Defining the sector order
+group_order = c("GC", "NT", 
+                "Intestinal", "Diffuse", 
+                "Treated", "Untreated",
+                "Cardia", "Non-Cardia",
+                "I", "II", "III", "IV")
+
+# Ordering the genera
+genera_ordered = lefse_all %>%
+  arrange(enrich_group, feature) %>%
+  pull(feature) %>%
+  unique()
+
+# Applying to the dataframe
+links = links %>%
+  mutate(enrich_group = factor(enrich_group, levels = group_order),
+         Genera = factor(Genera, levels = genera_ordered))
+
+
+# Defining group colors
+grid_colors = c("GC" = "#67000D", "NT" = "#2B7A78", 
+                "Intestinal" = "#3E7C93", "Diffuse" = "orange4", 
+                "Treated" = "#0868AC", "Untreated" = "#A50F15",
+                "Cardia" = "#B45309", "Non-Cardia" = "#006D2C",
+                "I" = "#5E2B97", "II" = "#084081", "III" = "#E6B85C","IV" = "#4E8216")
+
+# Defining genus colors in gray
+genera_colors = rep("grey85", length(unique(links$Genera)))
+names(genera_colors) = unique(links$Genera)
+grid_colors = c(grid_colors, genera_colors)
+
+# Scaling LDA for link thickness
+links$weight = rescale(links$weight, to = c(1,6))
+
+# Creating gaps: small between sectors, zero at the end
+all_sectors = unique(c(links$enrich_group, links$Genera))
+gap_vec = rep(1, length(all_sectors))
+
+# Circos plot
+circos.clear()
+circos.par(gap.degree = gap_vec)
+chordDiagram(
+  links[, c("enrich_group","Genera","weight")],
+  grid.col = grid_colors,
+  transparency = 0.25,
+  annotationTrack = "grid",
+  preAllocateTracks = 1)
+
+# Adding labels
+circos.trackPlotRegion(
+  track.index = 1,
+  panel.fun = function(x, y){
+    sector.name = get.cell.meta.data("sector.index")
+    xlim = get.cell.meta.data("xlim")
+    ylim = get.cell.meta.data("ylim")
+    circos.text(
+      mean(xlim),
+      ylim[1] + .1,
+      sector.name,
+      facing = "clockwise",
+      niceFacing = TRUE,
+      adj = c(0,0.5),
+      cex = 0.75)},
+  bg.border = NA)
+```

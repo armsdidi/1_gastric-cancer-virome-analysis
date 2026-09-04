@@ -1,0 +1,547 @@
+---
+title: "5_Community_patterns_and_clustering"
+author: Diego Pereira
+format: html
+toc: true
+toc-depth: 3
+embed-resources: true
+number-sections: true
+page-layout: full
+fontsize: 12pt
+mainfont: Arial
+editor: visual
+editor_options: 
+  chunk_output_type: console
+chunk_output_type: console
+---
+
+# Loading the packages
+
+```{r message=FALSE, warning=FALSE}
+library(dplyr)
+library(tibble)
+library(readxl)
+library(vegan)
+library(ggplot2)
+library(ggpubr)
+library(microbiome)
+library(phyloseq)
+library(circlize)
+library(scales)
+library(patchwork)
+library(ComplexHeatmap)
+library(ade4)
+library(cluster)
+library(philentropy)
+library(factoextra)
+```
+
+# Loading the data
+
+```{r message=FALSE, warning=FALSE}
+# Viral abundance data
+virus_tab = read_xlsx("virus_tab.xlsx", col_names = T)
+virus_tab = column_to_rownames(virus_tab, "Taxon")
+
+# Clinicopathological data
+sampleTable = read_xlsx("clinical_data.xlsx")
+sampleTable = sampleTable[sampleTable$samples_diego %in% 
+                          colnames(virus_tab), ]
+```
+
+# Jensen-Shannon distance and clustering (PAM)
+
+```{r message=FALSE, warning=FALSE, fig.width=12, fig.height=6}
+# Creating the phyloseq object
+OTU = otu_table(virus_tab, taxa_are_rows = TRUE)
+SAMPLE = sample_data(sampleTable)
+row.names(SAMPLE) = SAMPLE$samples_diego
+ps = phyloseq(OTU, SAMPLE)
+
+# Subsetting GC and NT only and removing genera with zero reads
+ps_T = subset_samples(ps, Tissue %in% c("GC", "NT"))
+ps_T = prune_taxa(taxa_sums(ps_T) > 0, ps_T)
+
+# Normalizing to relative abundance and extracting the transposed abundance matrix
+ps_rel_T = transform_sample_counts(ps_T, function(x) x / sum(x))
+otu = as.data.frame(t(otu_table(ps_rel_T)))
+
+# Calculating Jensen-Shannon distance (JSD)
+jsd = distance(otu, method = "jensen-shannon", unit = "log2")
+jsd = as.dist(jsd)
+
+# Clustering using the Partitioning Around Medoids (PAM) algorithm
+pam_res = pam(jsd, k = 3)
+clusters = factor(pam_res$clustering)
+
+# Evaluating the clusters
+fviz_nbclust(otu, pam, method = "silhouette")
+
+# Performing PCoA and converting the results into a dataframe
+pcoa = cmdscale(jsd, k = 2, eig = TRUE)
+pcoa_df = data.frame(Sample = rownames(otu), 
+                     PCoA1 = pcoa$points[,1], 
+                     PCoA2 = pcoa$points[,2], 
+                     Cluster = clusters)
+
+# Renaming the clusters
+pcoa_df$Cluster = paste0("GT-", pcoa_df$Cluster)
+
+# Variance explained by PCoA
+var_exp_jsd = round(pcoa$eig / sum(pcoa$eig) * 100, 2)
+var_exp_jsd[1:2]
+
+# Performing the PERMANOVA test and extracting R² and p-value
+perm_jsd = adonis2(jsd ~ Cluster, data = pcoa_df)
+pval = perm_jsd$`Pr(>F)`[1]
+r2 = perm_jsd$R2[1]
+
+# PCoA
+pcoa_jsd = ggplot(pcoa_df, aes(PCoA1, PCoA2, color = Cluster)) +
+  geom_point(size = 2, alpha = 1) +
+  stat_ellipse(aes(group = Cluster), level = 0.95, linewidth = 0.5) +
+  geom_vline(xintercept = 0, linetype = "dashed", linewidth = 0.4, color = "grey50") +
+  geom_hline(yintercept = 0, linetype = "dashed", linewidth = 0.4, color = "grey50") +
+  labs(title = "", x = paste0("PCoA1 (", round(pcoa$eig[1] /
+                  sum(pcoa$eig) * 100, 2), "%)"),
+                   y = paste0("PCoA2 (", round(pcoa$eig[2] /
+                  sum(pcoa$eig) * 100, 2), "%)")) +
+  scale_color_manual(values = c("GT-1" = "#A50F15","GT-2" = "#0868AC","GT-3" = "#E6B85C")) +
+  annotate("text",x = -Inf, y = Inf, label = "Principal Coordinate Analysis",
+  fontface = "bold", hjust = -0.03, vjust = 1.5, size = 5) + 
+  annotate("text", x = -Inf, y = Inf, label = paste0("PERMANOVA:\n", 
+            "p = ", format.pval(pval, digits = 3)), hjust = -0.08, vjust = 2, size = 4) +
+  theme_bw() +
+  scale_x_continuous(labels = scales::number_format(accuracy = 0.01)) + 
+  scale_y_continuous(labels = scales::number_format(accuracy = 0.01)) +
+  theme(
+    panel.grid = element_blank(),
+    legend.position = c(0.98, 0.98), 
+    legend.justification = c(1, 1),
+    legend.text = element_text(size = 10),
+    legend.title = element_blank(),
+    legend.background = element_blank(),
+    legend.key = element_blank(),
+    axis.text.x = element_text(colour = "black", size = 10),
+    axis.text.y = element_text(size = 10),
+    axis.title = element_text(size = 11))
+
+# Performing BCA and converting the results into a dataframe
+pca_res = dudi.pca(otu, scannf = FALSE, nf = 3)
+bca_res = bca(pca_res, fac = clusters, scannf = FALSE)
+bca_df = data.frame(Sample = rownames(otu),
+                    BCA1 = bca_res$ls[,1], 
+                    BCA2 = bca_res$ls[,2], 
+                    Cluster = clusters)
+
+# Renaming the clusters
+bca_df$Cluster = paste0("GT-", bca_df$Cluster)
+
+# Variance explained by BCA
+var_exp_bca = round(bca_res$eig / sum(bca_res$eig) * 100, 2)
+var_exp_bca[1:2]
+
+# BCA
+bca_plot = ggplot(bca_df, aes(BCA1, BCA2, color = Cluster)) +
+  geom_point(size = 2, alpha = 1) +
+  stat_ellipse(aes(group = Cluster), level = 0.95, linewidth = 0.5) +
+  geom_vline(xintercept = 0, linetype = "dashed", linewidth = 0.4, color = "grey50") +
+  geom_hline(yintercept = 0, linetype = "dashed", linewidth = 0.4, color = "grey50") +
+  labs(x = paste0("BCA1 (", var_exp_bca[1], "%)"), 
+       y = paste0("BCA2 (", var_exp_bca[2], "%)")) +
+  scale_color_manual(values = c("GT-1" = "#A50F15","GT-2" = "#0868AC","GT-3" = "#E6B85C")) +
+  annotate("text", x = -Inf, y = Inf, label = "Between-Class Analysis",
+           fontface = "bold", hjust = -0.03, vjust = 1.5, size = 5) +
+  annotate("text", x = -Inf, y = Inf, label = paste0("PERMANOVA:\n",
+            "p = ", format.pval(pval, digits = 3)), hjust = -0.08, vjust = 2, size = 4) +
+  theme_bw() +
+  scale_x_continuous(labels = scales::number_format(accuracy = 0.01)) + 
+  scale_y_continuous(labels = scales::number_format(accuracy = 0.01)) +
+  theme(
+    panel.grid = element_blank(),
+    legend.position = c(0.98, 0.98), 
+    legend.justification = c(1, 1),
+    legend.text = element_text(size = 10),
+    legend.title = element_blank(),
+    legend.background = element_blank(),
+    legend.key = element_blank(),
+    axis.text.x = element_text(colour = "black", size = 10),
+    axis.text.y = element_text(size = 10),
+    axis.title = element_text(size = 11))
+
+# PCoA + BCA
+plot_jsd = (pcoa_jsd + bca_plot)
+print(plot_jsd)
+```
+
+# Alpha diversity across clusters
+
+```{r message=FALSE, warning=FALSE, fig.width=12, fig.height=6}
+# Adding clusters to the phyloseq object
+sample_data(ps_T)$Cluster = clusters
+
+# Generating global indices
+alpha_div = microbiome::alpha(ps_T, index = "all")
+
+# Adding clusters
+alpha_div$Cluster = sample_data(ps_T)$Cluster[match(rownames(alpha_div), 
+                                                    rownames(sample_data(ps_T)))]
+
+# Renaming clusters
+alpha_div$Cluster = paste0("GT-", alpha_div$Cluster)
+
+# Observed richness
+p_rich_cluster = ggplot(alpha_div, aes(x = Cluster, y = observed, fill = Cluster)) +
+  geom_boxplot(aes(fill = Cluster, color = Cluster), size = 1, alpha = 0.8, outlier.shape = NA) +
+  stat_boxplot(aes(color = Cluster), geom = "errorbar", linewidth = 1, size = 1) +
+  geom_jitter(color = "#08306B", width = 0.1, size = 2, alpha = 1, show.legend = FALSE) +
+  scale_color_manual(values = c("GT-1" = "#A50F15","GT-2" = "#0868AC","GT-3" = "#E6B85C")) +
+  scale_fill_manual(values = c("GT-1" = "#A50F15","GT-2" = "#0868AC","GT-3" = "#E6B85C")) +
+  theme_bw() +
+  labs(x = "", y = "Observed richness") +
+  theme(panel.grid = element_blank(),
+        legend.position = "none",
+        legend.title = element_text(size = 12, face = "bold"),
+        axis.text.x = element_text(colour = "black", size = 10),
+        axis.text.y = element_text(size = 10),
+        strip.text.x = element_text(colour = "black", face = "bold", 
+                                    size = 10)) +
+  stat_compare_means(comparisons = list(c("GT-1","GT-2"), c("GT-1","GT-3"), 
+                                        c("GT-2","GT-3")), method = "wilcox.test")
+
+# Shannon
+p_shannon_cluster = ggplot(alpha_div, aes(x = Cluster, y = diversity_shannon, fill = Cluster)) +
+  geom_boxplot(aes(fill = Cluster, color = Cluster), size = 1, alpha = 0.8, outlier.shape = NA) +
+  stat_boxplot(aes(color = Cluster), geom = "errorbar", linewidth = 1, size = 1) +
+  geom_jitter(color = "#08306B", width = 0.1, size = 2, alpha = 1, show.legend = FALSE) +
+  scale_color_manual(values = c("GT-1" = "#A50F15","GT-2" = "#0868AC","GT-3" = "#E6B85C")) +
+  scale_fill_manual(values = c("GT-1" = "#A50F15","GT-2" = "#0868AC","GT-3" = "#E6B85C")) +
+  theme_bw() +
+  labs(x = "", y = "Shannon index") +
+  theme(panel.grid = element_blank(),
+        legend.position = "none",
+        legend.title = element_text(size = 12, face = "bold"),
+        axis.text.x = element_text(colour = "black", size = 10),
+        axis.text.y = element_text(size = 10),
+        strip.text.x = element_text(colour = "black", face = "bold", 
+                                    size = 10)) +
+  stat_compare_means(comparisons = list(c("GT-1","GT-2"), c("GT-1","GT-3"), 
+                                        c("GT-2","GT-3")), method = "wilcox.test")
+
+# Boxplot
+div_jsd = (p_rich_cluster + p_shannon_cluster) +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "right", 
+        legend.title = element_text(face = "bold", size = 12))
+print(div_jsd)
+```
+
+# Top30 global viruses across clusters
+
+```{r message=FALSE, warning=FALSE, fig.width=12, fig.height=8}
+# Adding clusters to the phyloseq object normalized
+sample_data(ps_rel_T)$Cluster = clusters
+
+# Renaming the clusters
+ps_rel_T@sam_data$Cluster = paste0("GT-", ps_rel_T@sam_data$Cluster )
+
+# Converting to long format
+df_long = psmelt(ps_rel_T)
+
+# Selecting the top30 global viruses (overall mean abundance)
+top_30_global = df_long %>%
+  group_by(OTU) %>%
+  summarise(mean_abundance = mean(Abundance), .groups = "drop") %>%
+  arrange(desc(mean_abundance)) %>%
+  slice(1:30) %>%
+  pull(OTU)
+
+# Filtering the matrix for the top 30
+mat = as(otu_table(ps_rel_T), "matrix")
+if(!taxa_are_rows(ps_rel_T)) mat = t(mat)
+mat = mat[top_30_global, ]
+
+# Ensuring alignment of annotation_col with the columns
+annotation_col = data.frame(Cluster = sample_data(ps_rel_T)$Cluster)
+rownames(annotation_col) = rownames(sample_data(ps_rel_T))
+annotation_col = annotation_col[colnames(mat), , drop = FALSE]
+
+# Transformation (log10)
+mat_log = log10(mat + 1e-6)
+
+# Top annotation (Cluster)
+col_ha = HeatmapAnnotation(
+  Cluster = annotation_col$Cluster,
+  col = list(Cluster = c("GT-1" = "#A50F15", "GT-2" = "#0868AC", "GT-3" = "#E6B85C")),
+  show_annotation_name = FALSE,
+  show_legend = FALSE)
+
+# Cluster legend
+lgd_cluster = Legend(
+  title = "Cluster",
+  at = c("GT-1","GT-2","GT-3"),
+  legend_gp = gpar(fill = c("#A50F15", "#0868AC", "#E6B85C")))
+
+# Abundance range colors (same pattern as the original)
+col_fun = colorRamp2(
+  c(-6, -4, -2, 2),
+  c("#FFFFFF", "#FDD0A2", "#E34A33", "#A50F15"))
+
+# Heatmap
+ht = Heatmap(
+  mat_log,
+  name = "Abundance",
+  col = col_fun,
+  top_annotation = col_ha,
+  show_heatmap_legend = FALSE,
+  show_row_names = TRUE,
+  row_names_side = "right",
+  row_names_gp = gpar(fontsize = 12, fontface = "italic"),
+  show_column_names = FALSE,
+  cluster_rows = TRUE,
+  cluster_columns = TRUE,
+  column_split = annotation_col$Cluster,
+  column_title = NULL,
+  row_title = NULL)
+
+# Heatmap legend
+lgd_heatmap = Legend(
+  col_fun = ht@matrix_color_mapping@col_fun,
+  title = "Abundance")
+
+# Combining legends
+lgd_combined = packLegend(
+  lgd_cluster,
+  lgd_heatmap,
+  direction = "vertical",
+  gap = unit(3, "mm"))
+
+# Plotting
+draw(ht,
+     heatmap_legend_side = "right",
+     annotation_legend_list = list(lgd_combined))
+```
+
+# Main viruses across clusters
+
+```{r message=FALSE, warning=FALSE, fig.width=12, fig.height=6}
+# Calculating the Top3 viruses per cluster (mean abundance)
+top_3_per_cluster = df_long %>%
+  group_by(Cluster, OTU) %>%
+  summarise(mean_abundance = mean(Abundance), .groups = "drop") %>%
+  group_by(Cluster) %>%
+  slice_max(mean_abundance, n = 3, with_ties = FALSE) %>%
+  arrange(Cluster, desc(mean_abundance)) %>%
+  ungroup()
+
+# Dropping empty OTUs
+df_top3 = df_long %>%
+  inner_join(top_3_per_cluster, by = c("Cluster", "OTU")) %>%
+  droplevels()
+
+# Defining colors for each virus
+cores_virus = c("Lymphocryptovirus" = "#A50F15","Gorganvirus" = "#0868AC","Simplexvirus" = "#E6B85C", 
+                "Cytomegalovirus" = "#E6B85C", "Alphapapillomavirus" = "#A50F15",
+                "Luchadorvirus" = "#A50F15","Jeilongvirus" = "#0868AC","Backyardiganvirus" = "#E6B85C")
+
+# Creating pairwise comparisons (Wilcoxon)
+my_comp = combn(names(cores_virus), 2, simplify = FALSE)
+
+# Boxplot
+plot_top3 = ggplot(df_top3, aes(x = OTU, y = Abundance, fill = OTU)) +
+  geom_boxplot(aes(fill = OTU, color = OTU), size = 1, alpha = 0.8, outlier.shape = NA) +
+  stat_boxplot(aes(color = OTU), geom = "errorbar", linewidth = 1, size = 1) +
+  geom_jitter(color = "#08306B", width = 0.1, size = 2, alpha = 1) +
+  scale_color_manual(values = cores_virus) +
+  scale_fill_manual(values = cores_virus) +
+  facet_wrap(~ Cluster, scales = "free_x", ncol = 3) +
+  scale_x_discrete(drop = TRUE) +
+  theme_bw() +
+  scale_y_log10() +
+  labs(x = "", y = "Relative abundance") +
+  theme(
+    panel.grid = element_blank(),
+    legend.position = "none",
+    legend.title = element_text(colour = "black", face = "bold", size = 12),
+    axis.text.x = element_text(colour = "black", size = 10, face = "italic"),
+    axis.text.y = element_text(size = 10),
+    strip.text.x = element_text(colour = "black", face = "bold", size = 10),
+    strip.background = element_rect(fill = "white", colour = "black")) +
+  stat_compare_means(comparisons = my_comp, method = "wilcox.test", 
+                     label = "p.format", size = 3)
+print(plot_top3)
+```
+
+# Association between clusters and clinicopathological features
+
+```{r message=FALSE, warning=FALSE, fig.width=12, fig.height=8}
+# Filtering samples from clusters 1 and 2 only
+meta = data.frame(sample_data(ps_T))
+meta = meta %>%
+  filter(Cluster %in% c("1", "2")) %>%
+  mutate(Cluster = factor(Cluster, levels = c("1","2")))
+
+# Renaming the clusters
+meta$Cluster = paste0("GT-", meta$Cluster)
+```
+
+## Lauren histological subtypes
+
+```{r message=FALSE, warning=FALSE, fig.width=10, fig.height=8}
+# Filtering the samples
+meta_lauren = meta %>%
+  filter(Lauren %in% c("Intestinal", "Diffuse")) %>%
+  mutate(Lauren = droplevels(factor(Lauren)),
+         Cluster = droplevels(factor(Cluster)))
+tab_lauren = table(meta_lauren$Cluster, meta_lauren$Lauren)
+fisher.test(tab_lauren)
+
+# Dataframe
+df_lauren = as.data.frame(tab_lauren) %>%
+  rename(Cluster = Var1, Lauren = Var2, n = Freq) %>%
+  group_by(Cluster) %>%
+  mutate(prop = n / sum(n))
+
+# P-value
+pval = fisher.test(tab_lauren)$p.value
+
+# Barplot
+bar_lauren = ggplot(df_lauren, aes(x = Cluster, y = prop, fill = Lauren)) +
+  geom_bar(stat = "identity", position = "fill") +
+  scale_fill_manual(values = c("Intestinal" = "#3E7C93", "Diffuse" = "orange4")) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(x = "", y = "Proportion (%)", fill = "Lauren") +
+  annotate("text", x = 1.5, y = 1.05, 
+           label = paste0("Fisher, p = ", signif(pval, 3)), size = 4) +
+  theme_classic() +
+  theme(panel.grid = element_blank(),
+        legend.title = element_text(size = 12, face = "bold"), 
+        legend.position = "right", 
+        strip.text = element_blank(), 
+        axis.text.x = element_text(size = 10), 
+        axis.text.y = element_text(colour = "black", size = 10), 
+        axis.title.x = element_text(size = 10), 
+        axis.title.y = element_text(size = 10))
+print(bar_lauren)
+```
+
+## Neoadjuvant chemotherapy
+
+```{r message=FALSE, warning=FALSE, fig.width=10, fig.height=8}
+# Filtering the samples
+meta_neo = meta %>%
+  filter(Neoadjuvant %in% c("Treated", "Untreated")) %>%
+  mutate(Neoadjuvant = droplevels(factor(Neoadjuvant)),
+         Cluster = droplevels(factor(Cluster)))
+tab_neo = table(meta_neo$Cluster, meta_neo$Neoadjuvant)
+fisher.test(tab_neo)
+
+# Dataframe
+df_neo = as.data.frame(tab_neo) %>%
+  rename(Cluster = Var1, Neoadjuvant = Var2, n = Freq) %>%
+  group_by(Cluster) %>%
+  mutate(prop = n / sum(n))
+
+# P-value
+pval = fisher.test(tab_neo)$p.value
+
+# Barplot
+bar_neo = ggplot(df_neo, aes(x = Cluster, y = prop, fill = Neoadjuvant)) +
+  geom_bar(stat = "identity", position = "fill") +
+  scale_fill_manual(values = c("Treated" = "#0868AC", "Untreated" = "#A50F15")) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(x = "", y = "Proportion (%)", fill = "Neoadjuvant") +
+  annotate("text", x = 1.5, y = 1.05, 
+           label = paste0("Fisher, p = ", signif(pval, 3)), size = 4) +
+  theme_classic() +
+  theme(panel.grid = element_blank(),
+        legend.title = element_text(size = 12, face = "bold"), 
+        legend.position = "right", 
+        strip.text = element_blank(), 
+        axis.text.x = element_text(size = 10), 
+        axis.text.y = element_text(colour = "black", size = 10), 
+        axis.title.x = element_text(size = 10), 
+        axis.title.y = element_text(size = 10))
+print(bar_neo)
+```
+
+## Tumor location
+
+```{r message=FALSE, warning=FALSE, fig.width=10, fig.height=8}
+# Filtering the samples
+meta_site = meta %>%
+  filter(Tumor_site %in% c("Cardia", "Non-Cardia")) %>%
+  mutate(Tumor_site = droplevels(factor(Tumor_site)),
+         Cluster = droplevels(factor(Cluster)))
+tab_site = table(meta_site$Cluster, meta_site$Tumor_site)
+fisher.test(tab_site)
+
+# Dataframe
+df_site = as.data.frame(tab_site) %>%
+  rename(Cluster = Var1, Tumor_site = Var2, n = Freq) %>%
+  group_by(Cluster) %>%
+  mutate(prop = n / sum(n))
+
+# P-value
+pval = fisher.test(tab_site)$p.value
+
+# Barplot
+bar_site = ggplot(df_site, aes(x = Cluster, y = prop, fill = Tumor_site)) +
+  geom_bar(stat = "identity", position = "fill") +
+  scale_fill_manual(values = c("Cardia" = "#B45309", "Non-Cardia" = "#006D2C")) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(x = "", y = "Proportion (%)", fill = "Tumor_site") +
+  annotate("text", x = 1.5, y = 1.05, 
+           label = paste0("Fisher, p = ", signif(pval, 3)), size = 4) +
+  theme_classic() +
+  theme(panel.grid = element_blank(),
+        legend.title = element_text(size = 12, face = "bold"), 
+        legend.position = "right", 
+        strip.text = element_blank(), 
+        axis.text.x = element_text(size = 10), 
+        axis.text.y = element_text(colour = "black", size = 10), 
+        axis.title.x = element_text(size = 10), 
+        axis.title.y = element_text(size = 10))
+print(bar_site)
+```
+
+## Clinical staging (cTNM)
+
+```{r message=FALSE, warning=FALSE, fig.width=10, fig.height=8}
+# Filtering the samples
+meta_TNM = meta %>%
+  filter(TNM %in% c("I", "II", "III", "IV")) %>%
+  mutate(TNM = droplevels(factor(TNM)),
+         Cluster = droplevels(factor(Cluster)))
+tab_TNM = table(meta_TNM$Cluster, meta_TNM$TNM)
+fisher.test(tab_TNM)
+
+# Dataframe
+df_TNM = as.data.frame(tab_TNM) %>%
+  rename(Cluster = Var1, TNM = Var2, n = Freq) %>%
+  group_by(Cluster) %>%
+  mutate(prop = n / sum(n))
+
+# P-value
+pval = fisher.test(tab_TNM)$p.value
+
+# Barplot
+bar_TNM = ggplot(df_TNM, aes(x = Cluster, y = prop, fill = TNM)) +
+  geom_bar(stat = "identity", position = "fill") +
+  scale_fill_manual(values = c("I" = "#5E2B97", "II" = "#084081", 
+                               "III" = "#E6B85C","IV" = "#4E8216")) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(x = "", y = "Proportion (%)", fill = "TNM") +
+  annotate("text", x = 1.5, y = 1.05, 
+           label = paste0("Fisher, p = ", signif(pval, 3)), size = 4) +
+  theme_classic() +
+  theme(panel.grid = element_blank(),
+        legend.title = element_text(size = 12, face = "bold"), 
+        legend.position = "right", 
+        strip.text = element_blank(), 
+        axis.text.x = element_text(size = 10), 
+        axis.text.y = element_text(colour = "black", size = 10), 
+        axis.title.x = element_text(size = 10), 
+        axis.title.y = element_text(size = 10))
+print(bar_TNM)
+```

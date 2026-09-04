@@ -1,0 +1,164 @@
+---
+title: "2_filtering_viral_taxa"
+author: Diego Pereira
+format: html
+toc: true
+toc-depth: 3
+embed-resources: true
+number-sections: true
+page-layout: full
+fontsize: 12pt
+mainfont: Arial
+editor: visual
+editor_options: 
+  chunk_output_type: console
+chunk_output_type: console
+---
+
+# Loading the packages
+
+```{r message=FALSE, warning=FALSE}
+library(readxl)
+library(dplyr)
+library(tibble)
+library(tidyr)
+library(openxlsx)
+library(purrr)
+```
+
+# Loading the abundance tables
+
+```{r message=FALSE, warning=FALSE}
+# Virustab1
+virus_tab1 = read.delim2("virus_tab1.tsv")
+virus_tab1 = virus_tab1 %>% 
+  select(-taxRank, -taxID, -Max) %>% 
+  mutate_all(replace_na, 0) %>% 
+  rename(Taxon = name)
+  
+# Virustab2
+virus_tab2 = read.delim2("virus_tab2.tsv")
+virus_tab2 = virus_tab2 %>% 
+  select(-taxRank, -taxID, -Max) %>% 
+  mutate_all(replace_na, 0) %>% 
+  rename(Taxon = name)
+
+# Virustab3
+virus_tab3 = read.delim2("virus_tab3.tsv")
+virus_tab3 = virus_tab3 %>% 
+  select(-taxRank, -taxID, -Max) %>% 
+  mutate_all(replace_na, 0) %>% 
+  rename(Taxon = name)
+
+# Virustab4
+virus_tab4 = read.delim2("virus_tab4.tsv")
+virus_tab4 = virus_tab4 %>% 
+  select(-taxRank, -taxID, -Max) %>% 
+  mutate_all(replace_na, 0) %>% 
+  rename(Taxon = name)
+
+# Virustab5
+virus_tab5 = read.delim2("virus_tab5.tsv")
+virus_tab5 = virus_tab5 %>% 
+  select(-taxRank, -taxID, -Max) %>% 
+  mutate_all(replace_na, 0) %>% 
+  rename(Taxon = name)
+
+# Virustab6
+virus_tab6 = read.delim2("virus_tab6.tsv")
+virus_tab6 = virus_tab6 %>% 
+  select(-taxRank, -taxID, -Max) %>% 
+  mutate_all(replace_na, 0) %>% 
+  rename(Taxon = name)
+
+# Virustab7
+virus_tab7 = read.delim2("virus_tab7.tsv")
+virus_tab7 = virus_tab7 %>% 
+  select(-taxRank, -taxID, -Max) %>% 
+  mutate_all(replace_na, 0) %>% 
+  rename(Taxon = name)
+
+# Virustab8
+virus_tab8 = read.delim2("virus_tab8.tsv")
+virus_tab8 = virus_tab8 %>% 
+  select(-taxRank, -taxID, -Max) %>% 
+  mutate_all(replace_na, 0) %>% 
+  rename(Taxon = name)
+
+# Virustab9
+virus_tab9 = read.delim2("virus_tab9.tsv")
+virus_tab9 = virus_tab9 %>% 
+  select(-taxRank, -taxID, -Max) %>% 
+  mutate_all(replace_na, 0) %>% 
+  rename(Taxon = name)
+
+# Virustab10
+virus_tab10 = read.delim2("virus_tab10.tsv")
+virus_tab10 = virus_tab10 %>% 
+  select(-taxRank, -taxID, -Max) %>% 
+  mutate_all(replace_na, 0) %>% 
+  rename(Taxon = name)
+```
+
+# Filtering viral taxa
+
+```{r message=FALSE, warning=FALSE}
+# Creating a list with all tables
+virus_list = list(
+  virus_tab1, virus_tab2, virus_tab3, virus_tab4, virus_tab5,
+  virus_tab6, virus_tab7, virus_tab8, virus_tab9, virus_tab10) 
+
+# Removing duplicates within each table
+virustab = virus_list %>%
+  purrr::map(~ .x %>%
+        dplyr::group_by(Taxon) %>%
+        dplyr::summarise(
+          dplyr::across(where(is.numeric), sum),
+          lineage = dplyr::first(lineage),
+          .groups = "drop")) %>%
+  # Full join across all tables
+  purrr::reduce(dplyr::full_join, by = "Taxon") %>%
+  # Merging lineage.x, lineage.y, etc.
+  dplyr::mutate(lineage = do.call(dplyr::coalesce, dplyr::select(., starts_with("lineage")))) %>%
+  # Removing duplicated lineage columns
+  dplyr::select(-matches("^lineage\\.")) %>%
+  # Replacing numeric NAs with 0
+  dplyr::mutate(dplyr::across(where(is.numeric), ~ tidyr::replace_na(., 0))) %>%
+  # Filtering viruses only
+  dplyr::filter(grepl("Viruses", lineage, ignore.case = TRUE)) %>%
+  # Removing the final lineage column
+  dplyr::select(-lineage)
+
+# Renaming the samples
+colnames(virustab) = gsub("X", "", colnames(virustab))
+colnames(virustab) = gsub(".cladeReads", "", colnames(virustab))
+colnames(virustab) = gsub("\\.", "-", colnames(virustab))
+
+# Checking samples with no reads and then filtering those with >4 reads
+virustab = virustab %>%
+  column_to_rownames("Taxon") %>%
+  as.data.frame() %>%
+  t() %>%
+  as.data.frame() %>%
+  cbind(total_sum = rowSums(.[, 1:987])) 
+virustab = virustab %>% 
+  filter(total_sum > 4)
+
+# Checking taxa with no reads and then filtering those with >4 reads
+virustab = virustab %>%
+  select(-total_sum) %>%
+  as.data.frame() %>%
+  t() %>%
+  as.data.frame() %>%
+  cbind(total_sum = rowSums(.[, 1:451])) 
+virustab = virustab %>% 
+   filter(total_sum > 4) 
+
+# Removing the "total_sum" column and moving "Taxon" from rownames to a column
+virustab = virustab %>% 
+  select(-total_sum) %>% 
+  rownames_to_column(var = "Taxon")
+
+# Saving the viral taxa table
+write.xlsx(virustab, file = "virus_tab.xlsx")
+```

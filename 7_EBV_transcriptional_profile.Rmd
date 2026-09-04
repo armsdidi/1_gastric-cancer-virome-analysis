@@ -1,0 +1,214 @@
+---
+title: "7_EBV_transcriptional_profile"
+author: Diego Pereira
+format: html
+toc: true
+toc-depth: 3
+embed-resources: true
+number-sections: true
+page-layout: full
+fontsize: 12pt
+mainfont: Arial
+editor: visual
+editor_options: 
+  chunk_output_type: console
+chunk_output_type: console
+---
+
+# Loading the packages
+
+```{r message=FALSE, warning=FALSE}
+library(readxl)
+library(tibble)
+library(pheatmap)
+library(ggplot2)
+library(ggridges)
+library(reshape2)
+library(DESeq2)
+library(dplyr)
+library(ComplexHeatmap)
+library(circlize)
+library(grid)
+```
+
+# Loading the data
+
+```{r message=FALSE, warning=FALSE}
+# Viral expression data
+EBV_genes = read_xlsx("EBV_genes.xlsx", col_names = T)
+EBV_genes = column_to_rownames(EBV_genes, "Genes")
+```
+
+# Gene expression pattern
+
+## Heatmap (Option 1)
+
+```{r message=FALSE, warning=FALSE, fig.width=12, fig.height=8}
+# Converting dataframe to matrix
+expr_matrix = as.matrix(EBV_genes)
+
+# Creating simple metadata
+coldata = data.frame(row.names = colnames(expr_matrix),
+                      condition = rep("all", ncol(expr_matrix)))
+
+# Creating DESeq2 object
+dds = DESeqDataSetFromMatrix(countData = round(expr_matrix),
+                              colData = coldata,
+                              design = ~ 1)
+
+# Calculating size factors
+dds = estimateSizeFactors(dds)
+
+# Applying rlog (recommended function for a small number of genes)
+rlog_data = rlog(dds, blind = TRUE)
+
+# Extracting normalized matrix
+expr_rlog = assay(rlog_data)
+
+# Vector with gene names from the heatmap
+genes = rownames(expr_rlog)
+gene_annotation = data.frame(Gene = genes, Category = NA)
+
+# Latent genes
+latent_genes = c("LMP-1", "LMP-2A", "LMP-2B",
+                 "EBNA-2", "EBNA-3A", "EBNA-3B/EBNA-3C", "EBNA-1.2")
+
+# Lytic genes
+lytic_genes = c("BZLF1", "BRLF1")
+
+# ncRNAs
+ncrna_genes = c("EBER-1", "EBER-2", "RPMS1", "A73")
+
+# Assigning categories
+gene_annotation$Category[gene_annotation$Gene %in% latent_genes] = "Latent (protein-coding)"
+gene_annotation$Category[gene_annotation$Gene %in% lytic_genes] = "Lytic (protein-coding)"
+gene_annotation$Category[gene_annotation$Gene %in% ncrna_genes] = "Latent (ncRNA)"
+rownames(gene_annotation) = gene_annotation$Gene
+gene_annotation = gene_annotation[, "Category", drop = FALSE]
+
+# Defining colors
+ann_colors = list(
+  Category = c("Latent (protein-coding)" = "#A50F15", 
+               "Lytic (protein-coding)" = "#0868AC", 
+               "Latent (ncRNA)" = "#E6B85C"))
+
+# Renaming samples to S1...S10
+colnames(expr_rlog) = paste0("S", 1:ncol(expr_rlog))
+
+# Plotting the heatmap
+pheatmap(expr_rlog,
+         scale = "none",
+         cluster_rows = TRUE,
+         cluster_cols = TRUE,
+         show_colnames = TRUE,
+         annotation_row = gene_annotation,
+         annotation_colors = ann_colors,
+         annotation_names_row = FALSE,
+         labels_row = parse(text = paste0("italic('", rownames(expr_rlog), "')")),
+         color = colorRampPalette(c("navy", "white", "firebrick3"))(50))
+```
+
+## Heatmap (Option 2)
+
+```{r message=FALSE, warning=FALSE, fig.width=12, fig.height=8}
+# Preparing annotation (Category)
+gene_annotation$Category = factor(gene_annotation$Category,
+                                  levels = c("Latent (protein-coding)",
+                                             "Lytic (protein-coding)",
+                                             "Latent (ncRNA)"))
+ha_row = rowAnnotation(
+  Category = gene_annotation$Category,
+  col = list(Category = ann_colors$Category),
+  show_annotation_name = FALSE)
+
+# Heatmap
+ht = Heatmap(expr_rlog,
+             name = "Expression",
+             col = colorRamp2(c(min(expr_rlog), 0, max(expr_rlog)),
+                              c("navy", "white", "firebrick3")),
+             cluster_rows = TRUE,
+             cluster_columns = TRUE,
+             show_column_names = TRUE,
+             show_row_names = TRUE,
+             row_names_gp = gpar(fontface = "italic", fontsize = 12),
+             left_annotation = ha_row,
+             heatmap_legend_param = list(
+               title = "Expression",
+               direction = "vertical"))
+
+# Plotting with legends on the right
+draw(ht,
+     heatmap_legend_side = "right",
+     annotation_legend_side = "right")
+```
+
+## Bubble plot
+
+```{r message=FALSE, warning=FALSE, fig.width=12, fig.height=8}
+# Extracting normalized counts
+norm_counts = counts(dds, normalized = TRUE)
+
+# Log2 transformation for visualization
+norm_counts_log = log2(norm_counts + 1)
+
+# Renaming samples to S1...S10
+colnames(norm_counts_log) = paste0("S", 1:ncol(norm_counts_log))
+
+# Converting to long format
+expr_long = melt(norm_counts_log)
+colnames(expr_long) = c("Gene", "Sample", "Expression")
+
+# Ordering genes from highest to lowest expression
+gene_order = expr_long |>
+  aggregate(Expression ~ Gene, data = _, median) |>
+  arrange(desc(Expression))
+expr_long$Gene = factor(expr_long$Gene, levels = gene_order$Gene)
+
+# Bubble plot
+plot_bubble = ggplot(expr_long, aes(x = Sample, y = Gene)) +
+  geom_point(aes(size = Expression, color = Expression), alpha = 0.8) +
+  scale_color_gradientn(colors = c("#0868AC", "white", "#A50F15")) +
+  scale_size(range = c(2, 10)) +
+  theme_bw() +
+  labs(x = "", y = "", color = "Expression", size = "Expression") +
+  theme(panel.grid = element_blank(),
+        axis.text.x = element_text(angle = 45, hjust = 1, colour = "black"),
+        axis.text.y = element_text(face = "italic", colour = "black", size = 10))
+print(plot_bubble)
+```
+
+## Boxplot and Ridgeline plot
+
+```{r message=FALSE, warning=FALSE, fig.width=12, fig.height=8}
+# Palette with 13 colors (gradient between 3 colors)
+cores_genes = colorRampPalette(c("#A50F15", "#E6B85C", "#0868AC"))(13)
+names(cores_genes) = levels(expr_long$Gene)
+
+# Boxplot
+plot_EBV = ggplot(expr_long, aes(x = Gene, y = Expression)) +
+  geom_boxplot(aes(fill = Gene, color = Gene), size = 1, alpha = 0.8, outlier.shape = NA) +
+  stat_boxplot(aes(color = Gene), geom = "errorbar", linewidth = 1, size = 1) +
+  scale_fill_manual(values = cores_genes) +
+  scale_color_manual(values = cores_genes) +
+  theme_bw() +
+  labs(x = "Genes", y = "Expression log2(count + 1)") +
+  theme(legend.position = "none",
+        legend.title = element_text(size = 12, face = "bold"),
+        axis.text.x = element_text(angle = 45, hjust = 1, colour = "black", size = 10, 
+                                   face = "italic"),
+        axis.text.y = element_text(size = 10),
+        strip.text.x = element_text(colour = "black", face = "bold", size = 10))
+print(plot_EBV)
+
+# Ridgeline plot
+plot_ridge = ggplot(expr_long, aes(x = Expression, y = Gene, fill = Gene)) +
+  geom_density_ridges(alpha = 0.7, scale = 1.2, color = "black", linewidth = 0.3) +
+  scale_fill_manual(values = cores_genes) +
+  theme_bw() +
+  labs(x = "Expression log2(count + 1)", y = "") +
+  theme(panel.grid = element_blank(),
+        legend.position = "none",
+        axis.text.y = element_text(face = "italic", size = 10, colour = "black"),
+        axis.text.x = element_text(size = 10))
+print(plot_ridge)
+```

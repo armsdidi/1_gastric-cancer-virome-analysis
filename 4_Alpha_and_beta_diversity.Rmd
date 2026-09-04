@@ -1,0 +1,972 @@
+---
+title: "4_Alpha_and_beta_diversity"
+author: Diego Pereira
+format: html
+toc: true
+toc-depth: 3
+embed-resources: true
+number-sections: true
+page-layout: full
+fontsize: 12pt
+mainfont: Arial
+editor: visual
+editor_options: 
+  chunk_output_type: console
+chunk_output_type: console
+---
+
+# Loading the packages
+
+```{r message=FALSE, warning=FALSE}
+library(dplyr)
+library(tibble)
+library(readxl)
+library(vegan)
+library(ggplot2)
+library(ggpubr)
+library(microbiome)
+library(phyloseq)
+library(patchwork)
+```
+
+# Loading the data
+
+```{r message=FALSE, warning=FALSE}
+# Viral abundance data
+virus_tab = read_xlsx("virus_tab.xlsx", col_names = T)
+virus_tab = column_to_rownames(virus_tab, "Taxon")
+
+# Clinicopathological data
+sampleTable = read_xlsx("clinical_data.xlsx")
+sampleTable = sampleTable[sampleTable$samples_diego %in% 
+                          colnames(virus_tab), ]
+```
+
+# Alpha diversity
+
+## Tissue type
+
+```{r message=FALSE, warning=FALSE, fig.width=12, fig.height=8}
+# Creating the phyloseq object
+OTU = otu_table(virus_tab, taxa_are_rows = TRUE)
+SAMPLE = sample_data(sampleTable)
+row.names(SAMPLE) = SAMPLE$samples_diego
+ps = phyloseq(OTU, SAMPLE)
+
+# Subsetting GC and NT only and removing genera with zero reads
+ps_T = subset_samples(ps, Tissue %in% c("GC", "NT"))
+ps_T = prune_taxa(taxa_sums(ps_T) > 0, ps_T)
+
+# Generating global indices
+indices_alfa = microbiome::alpha(ps_T, index = "all")
+
+# Adding metadata
+indices_alfa$Sample = row.names(indices_alfa)
+indices_alfa = merge(indices_alfa, sampleTable, by.x = "Sample", by.y = "samples_diego")
+
+# Observed richness
+p.richness = ggplot(data = indices_alfa, aes(x = Tissue, y = observed)) + 
+  geom_boxplot(aes(fill = Tissue, color = Tissue), size = 1, alpha = 0.8, outlier.shape = NA) +
+  stat_boxplot(aes(color = Tissue), geom = "errorbar", linewidth = 1, size = 1) +
+  geom_jitter(color = "#08306B", width = 0.1, size = 2, alpha = 1) +
+  scale_color_manual(values = c(c("GC" = "#67000D", "NT" = "#2B7A78"))) +
+  scale_fill_manual(values = c(c("GC" = "#67000D", "NT" = "#2B7A78"))) +
+  theme_bw() +
+  labs(x = "", y = "Observed richness") +
+  theme(panel.grid = element_blank(),
+        legend.position = "none",
+        legend.title = element_blank(),
+        axis.text.x = element_text(colour = "black", size = 10),
+        axis.text.y = element_text(size = 10),
+        strip.text.x = element_text(colour = "black", face = "bold", 
+                                    size = 10)) +
+  stat_compare_means(label = "p.format", size = 4)
+
+# Shannon
+p.shannon = ggplot(data = indices_alfa, aes(x = Tissue, y = diversity_shannon)) + 
+  geom_boxplot(aes(fill = Tissue, color = Tissue), size = 1, alpha = 0.8, outlier.shape = NA) +
+  stat_boxplot(aes(color = Tissue), geom = "errorbar", linewidth = 1, size = 1) +
+  geom_jitter(color = "#08306B", width = 0.1, size = 2, alpha = 1) +
+  scale_color_manual(values = c("GC" = "#67000D", "NT" = "#2B7A78")) +
+  scale_fill_manual(values = c("GC" = "#67000D", "NT" = "#2B7A78")) +
+  theme_bw() +
+  labs(x = "", y = "Shannon index") +
+  theme(panel.grid = element_blank(),
+        legend.position = "none",
+        legend.title = element_blank(),
+        axis.text.x = element_text(colour = "black", size = 10),
+        axis.text.y = element_text(size = 10),
+        strip.text.x = element_text(colour = "black", face = "bold", 
+                                    size = 10)) +
+  stat_compare_means(label = "p.format", size = 4)
+
+# Simpson
+p.simpson = ggplot(data = indices_alfa, aes(x = Tissue, y = diversity_inverse_simpson)) + 
+  geom_boxplot(aes(fill = Tissue, color = Tissue), size = 1, alpha = 0.8, outlier.shape = NA) +
+  stat_boxplot(aes(color = Tissue), geom = "errorbar", linewidth = 1, size = 1) +
+  geom_jitter(color = "#08306B", width = 0.1, size = 2, alpha = 1) +
+  scale_color_manual(values = c("GC" = "#67000D", "NT" = "#2B7A78")) +
+  scale_fill_manual(values = c("GC" = "#67000D", "NT" = "#2B7A78")) +
+  theme_bw() +
+  labs(x = "", y = "Inverse Simpson index") +
+  theme(panel.grid = element_blank(),
+        legend.position = "none",
+        legend.title = element_blank(),
+        axis.text.x = element_text(colour = "black", size = 10),
+        axis.text.y = element_text(size = 10),
+        strip.text.x = element_text(colour = "black", face = "bold", 
+                                    size = 10)) +
+  stat_compare_means(label = "p.format", size = 4)
+
+# Boxplot
+plot_T = (p.richness + p.shannon + p.simpson) +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "right", 
+        legend.title = element_text(face = "bold", size = 12))
+print(plot_T)
+```
+
+## Lauren histological subtypes
+
+```{r message=FALSE, warning=FALSE, fig.width=12, fig.height=8}
+# Filtering only samples with Lauren data
+indices_alfa_lauren = filter(indices_alfa, Lauren %in% c("Intestinal", "Diffuse"))
+
+# Observed richness
+p.richness_lauren = ggplot(data = indices_alfa_lauren, aes(x = Lauren, y = observed)) + 
+  geom_boxplot(aes(fill = Lauren, color = Lauren), size = 1, alpha = 0.8, outlier.shape = NA) +
+  stat_boxplot(aes(color = Lauren), geom = "errorbar", linewidth = 1, size = 1) +
+  geom_jitter(color = "#08306B", width = 0.1, size = 2, alpha = 1) +
+  scale_color_manual(values = c("Intestinal" = "#3E7C93", "Diffuse" = "orange4")) +
+  scale_fill_manual(values = c("Intestinal" = "#3E7C93", "Diffuse" = "orange4")) +
+  theme_bw() +
+  labs(x = "", y = "Observed richness") +
+  theme(panel.grid = element_blank(),
+        legend.position = "none",
+        legend.title = element_blank(),
+        axis.text.x = element_text(colour = "black", size = 10),
+        axis.text.y = element_text(size = 10),
+        strip.text.x = element_text(colour = "black", face = "bold", 
+                                    size = 10)) +
+  stat_compare_means(label = "p.format", size = 4)
+
+# Shannon
+p.shannon_lauren = ggplot(data = indices_alfa_lauren, aes(x = Lauren, y = diversity_shannon)) + 
+  geom_boxplot(aes(fill = Lauren, color = Lauren), size = 1, alpha = 0.8, outlier.shape = NA) +
+  stat_boxplot(aes(color = Lauren), geom = "errorbar", linewidth = 1, size = 1) +
+  geom_jitter(color = "#08306B", width = 0.1, size = 2, alpha = 1) +
+  scale_color_manual(values = c("Intestinal" = "#3E7C93", "Diffuse" = "orange4")) +
+  scale_fill_manual(values = c("Intestinal" = "#3E7C93", "Diffuse" = "orange4")) +
+  theme_bw() +
+  labs(x = "", y = "Shannon index") +
+  theme(panel.grid = element_blank(),
+        legend.position = "none",
+        legend.title = element_blank(),
+        axis.text.x = element_text(colour = "black", size = 10),
+        axis.text.y = element_text(size = 10),
+        strip.text.x = element_text(colour = "black", face = "bold", 
+                                    size = 10)) +
+  stat_compare_means(label = "p.format", size = 4)
+
+# Simpson
+p.simpson_lauren = ggplot(data = indices_alfa_lauren, aes(x = Lauren, y = diversity_inverse_simpson)) + 
+  geom_boxplot(aes(fill = Lauren, color = Lauren), size = 1, alpha = 0.8, outlier.shape = NA) +
+  stat_boxplot(aes(color = Lauren), geom = "errorbar", linewidth = 1, size = 1) +
+  geom_jitter(color = "#08306B", width = 0.1, size = 2, alpha = 1) +
+  scale_color_manual(values = c("Intestinal" = "#3E7C93", "Diffuse" = "orange4")) +
+  scale_fill_manual(values = c("Intestinal" = "#3E7C93", "Diffuse" = "orange4")) +
+  theme_bw() +
+  labs(x = "", y = "Inverse Simpson index") +
+  theme(panel.grid = element_blank(),
+        legend.position = "none",
+        legend.title = element_blank(),
+        axis.text.x = element_text(colour = "black", size = 10),
+        axis.text.y = element_text(size = 10),
+        strip.text.x = element_text(colour = "black", face = "bold", 
+                                    size = 10)) +
+  stat_compare_means(label = "p.format", size = 4)
+
+# Boxplot
+plot_lauren = (p.richness_lauren + p.shannon_lauren + p.simpson_lauren) +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "right", 
+        legend.title = element_text(face = "bold", size = 12))
+print(plot_lauren)
+```
+
+## Neoadjuvant chemotherapy
+
+```{r message=FALSE, warning=FALSE, fig.width=12, fig.height=8}
+# Filtering only samples with neoadjuvant chemotherapy data
+indices_alfa_neo = filter(indices_alfa, Neoadjuvant %in% c("Treated", "Untreated"))
+
+# Observed richness
+p.richness_neo = ggplot(data = indices_alfa_neo, aes(x = Neoadjuvant, y = observed)) + 
+  geom_boxplot(aes(fill = Neoadjuvant, color = Neoadjuvant), size = 1, alpha = 0.8, 
+               outlier.shape = NA) +
+  stat_boxplot(aes(color = Neoadjuvant), geom = "errorbar", linewidth = 1, size = 1) +
+  geom_jitter(color = "#08306B", width = 0.1, size = 2, alpha = 1) +
+  scale_color_manual(values = c("Treated" = "#0868AC", "Untreated" = "#A50F15")) +
+  scale_fill_manual(values = c("Treated" = "#0868AC", "Untreated" = "#A50F15")) +
+  theme_bw() +
+  labs(x = "", y = "Observed richness") +
+  theme(panel.grid = element_blank(),
+        legend.position = "none",
+        legend.title = element_blank(),
+        axis.text.x = element_text(colour = "black", size = 10),
+        axis.text.y = element_text(size = 10),
+        strip.text.x = element_text(colour = "black", face = "bold", 
+                                    size = 10)) +
+  stat_compare_means(label = "p.format", size = 4)
+
+# Shannon
+p.shannon_neo = ggplot(data = indices_alfa_neo, aes(x = Neoadjuvant, y = diversity_shannon)) + 
+  geom_boxplot(aes(fill = Neoadjuvant, color = Neoadjuvant), size = 1, alpha = 0.8, 
+               outlier.shape = NA) +
+  stat_boxplot(aes(color = Neoadjuvant), geom = "errorbar", linewidth = 1, size = 1) +
+  geom_jitter(color = "#08306B", width = 0.1, size = 2, alpha = 1) +
+  scale_color_manual(values = c("Treated" = "#0868AC", "Untreated" = "#A50F15")) +
+  scale_fill_manual(values = c("Treated" = "#0868AC", "Untreated" = "#A50F15")) +
+  theme_bw() +
+  labs(x = "", y = "Shannon index") +
+  theme(panel.grid = element_blank(),
+        legend.position = "none",
+        legend.title = element_blank(),
+        axis.text.x = element_text(colour = "black", size = 10),
+        axis.text.y = element_text(size = 10),
+        strip.text.x = element_text(colour = "black", face = "bold", 
+                                    size = 10)) +
+  stat_compare_means(label = "p.format", size = 4)
+
+# Simpson
+p.simpson_neo = ggplot(data = indices_alfa_neo, aes(x = Neoadjuvant, y = diversity_inverse_simpson)) + 
+  geom_boxplot(aes(fill = Neoadjuvant, color = Neoadjuvant), size = 1, alpha = 0.8, 
+               outlier.shape = NA) +
+  stat_boxplot(aes(color = Neoadjuvant), geom = "errorbar", linewidth = 1, size = 1) +
+  geom_jitter(color = "#08306B", width = 0.1, size = 2, alpha = 1) +
+  scale_color_manual(values = c("Treated" = "#0868AC", "Untreated" = "#A50F15")) +
+  scale_fill_manual(values = c("Treated" = "#0868AC", "Untreated" = "#A50F15")) +
+  theme_bw() +
+  labs(x = "", y = "Inverse Simpson index") +
+  theme(panel.grid = element_blank(),
+        legend.position = "none",
+        legend.title = element_blank(),
+        axis.text.x = element_text(colour = "black", size = 10),
+        axis.text.y = element_text(size = 10),
+        strip.text.x = element_text(colour = "black", face = "bold", 
+                                    size = 10)) +
+  stat_compare_means(label = "p.format", size = 4)
+
+# Boxplot
+plot_neo = (p.richness_neo + p.shannon_neo + p.simpson_neo) +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "right", 
+        legend.title = element_text(face = "bold", size = 12))
+print(plot_neo)
+```
+
+## Tumor location
+
+```{r message=FALSE, warning=FALSE, fig.width=12, fig.height=8}
+# Filtering only samples with tumor location data
+indices_alfa_site = filter(indices_alfa, Tumor_site %in% c("Cardia", "Non-Cardia"))
+
+# Observed richness
+p.richness_site = ggplot(data = indices_alfa_site, aes(x = Tumor_site, y = observed)) + 
+  geom_boxplot(aes(fill = Tumor_site, color = Tumor_site), size = 1, alpha = 0.8, 
+               outlier.shape = NA) +
+  stat_boxplot(aes(color = Tumor_site), geom = "errorbar", linewidth = 1, size = 1) +
+  geom_jitter(color = "#08306B", width = 0.1, size = 2, alpha = 1) +
+  scale_color_manual(values = c("Cardia" = "#B45309", "Non-Cardia" = "#006D2C")) +
+  scale_fill_manual(values = c("Cardia" = "#B45309", "Non-Cardia" = "#006D2C")) +
+  theme_bw() +
+  labs(x = "", y = "Observed richness") +
+  theme(panel.grid = element_blank(),
+        legend.position = "none",
+        legend.title = element_blank(),
+        axis.text.x = element_text(colour = "black", size = 10),
+        axis.text.y = element_text(size = 10),
+        strip.text.x = element_text(colour = "black", face = "bold", 
+                                    size = 10)) +
+  stat_compare_means(label = "p.format", size = 4)
+
+# Shannon
+p.shannon_site = ggplot(data = indices_alfa_site, aes(x = Tumor_site, y = diversity_shannon)) + 
+  geom_boxplot(aes(fill = Tumor_site, color = Tumor_site), size = 1, alpha = 0.8, 
+               outlier.shape = NA) +
+  stat_boxplot(aes(color = Tumor_site), geom = "errorbar", linewidth = 1, size = 1) +
+  geom_jitter(color = "#08306B", width = 0.1, size = 2, alpha = 1) +
+  scale_color_manual(values = c("Cardia" = "#B45309", "Non-Cardia" = "#006D2C")) +
+  scale_fill_manual(values = c("Cardia" = "#B45309", "Non-Cardia" = "#006D2C")) +
+  theme_bw() +
+  labs(x = "", y = "Shannon index") +
+  theme(panel.grid = element_blank(),
+        legend.position = "none",
+        legend.title = element_blank(),
+        axis.text.x = element_text(colour = "black", size = 10),
+        axis.text.y = element_text(size = 10),
+        strip.text.x = element_text(colour = "black", face = "bold", 
+                                    size = 10)) +
+  stat_compare_means(label = "p.format", size = 4)
+
+# Simpson
+p.simpson_site = ggplot(data = indices_alfa_site, aes(x = Tumor_site, y = diversity_inverse_simpson)) + 
+  geom_boxplot(aes(fill = Tumor_site, color = Tumor_site), size = 1, alpha = 0.8, 
+               outlier.shape = NA) +
+  stat_boxplot(aes(color = Tumor_site), geom = "errorbar", linewidth = 1, size = 1) +
+  geom_jitter(color = "#08306B", width = 0.1, size = 2, alpha = 1) +
+  scale_color_manual(values = c("Cardia" = "#B45309", "Non-Cardia" = "#006D2C")) +
+  scale_fill_manual(values = c("Cardia" = "#B45309", "Non-Cardia" = "#006D2C")) +
+  theme_bw() +
+  labs(x = "", y = "Inverse Simpson index") +
+  theme(panel.grid = element_blank(),
+        legend.position = "none",
+        legend.title = element_blank(),
+        axis.text.x = element_text(colour = "black", size = 10),
+        axis.text.y = element_text(size = 10),
+        strip.text.x = element_text(colour = "black", face = "bold", 
+                                    size = 10)) +
+  stat_compare_means(label = "p.format", size = 4)
+
+# Boxplot
+plot_site = (p.richness_site + p.shannon_site + p.simpson_site) +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "right", 
+        legend.title = element_text(face = "bold", size = 12))
+print(plot_site)
+```
+
+## Clinical staging (cTNM)
+
+```{r message=FALSE, warning=FALSE, fig.width=12, fig.height=8}
+# Filtering only samples with cTNM data
+indices_alfa_TNM = filter(indices_alfa, TNM %in% c("I", "II", "III", "IV"))
+
+# Creating a list of pairwise comparisons (Wilcoxon)
+my_comp = list(c("I", "II"), c("I", "III"), c("I", "IV"), 
+               c("II", "III"), c("II", "IV"), c("III", "IV"))
+
+# Observed richness
+p.richness_TNM = ggplot(data = indices_alfa_TNM, aes(x = TNM, y = observed)) + 
+  geom_boxplot(aes(fill = TNM, color = TNM), size = 1, alpha = 0.8, outlier.shape = NA) +
+  stat_boxplot(aes(color = TNM), geom = "errorbar", linewidth = 1, size = 1) +
+  geom_jitter(color = "#08306B", width = 0.1, size = 2, alpha = 1) +
+  scale_color_manual(values = c("I" = "#5E2B97", "II" = "#084081", 
+                                "III" = "#E6B85C","IV" = "#4E8216")) +
+  scale_fill_manual(values = c("I" = "#5E2B97", "II" = "#084081", 
+                               "III" = "#E6B85C","IV" = "#4E8216")) +
+  theme_bw() +
+  labs(x = "", y = "Observed richness") +
+  theme(panel.grid = element_blank(),
+        legend.position = "none",
+        legend.title = element_blank(),
+        axis.text.x = element_text(colour = "black", size = 10),
+        axis.text.y = element_text(size = 10),
+        strip.text.x = element_text(colour = "black", face = "bold", 
+                                    size = 10)) +
+  stat_compare_means(comparisons = my_comp, method = "wilcox.test", 
+                     label = "p.format", size = 4)
+
+# Shannon
+p.shannon_TNM = ggplot(data = indices_alfa_TNM, aes(x = TNM, y = diversity_shannon)) + 
+  geom_boxplot(aes(fill = TNM, color = TNM), size = 1, alpha = 0.8, outlier.shape = NA) +
+  stat_boxplot(aes(color = TNM), geom = "errorbar", linewidth = 1, size = 1) +
+  geom_jitter(color = "#08306B", width = 0.1, size = 2, alpha = 1) +
+  scale_color_manual(values = c("I" = "#5E2B97", "II" = "#084081", 
+                                "III" = "#E6B85C","IV" = "#4E8216")) +
+  scale_fill_manual(values = c("I" = "#5E2B97", "II" = "#084081", 
+                                "III" = "#E6B85C","IV" = "#4E8216")) +
+  theme_bw() +
+  labs(x = "", y = "Shannon index") +
+  theme(panel.grid = element_blank(),
+        legend.position = "none",
+        legend.title = element_blank(),
+        axis.text.x = element_text(colour = "black", size = 10),
+        axis.text.y = element_text(size = 10),
+        strip.text.x = element_text(colour = "black", face = "bold", 
+                                    size = 10)) +
+  stat_compare_means(comparisons = my_comp, method = "wilcox.test", 
+                     label = "p.format", size = 4)
+
+# Simpson
+p.simpson_TNM = ggplot(data = indices_alfa_TNM, aes(x = TNM, y = diversity_inverse_simpson)) + 
+  geom_boxplot(aes(fill = TNM, color = TNM), size = 1, alpha = 0.8, outlier.shape = NA) +
+  stat_boxplot(aes(color = TNM), geom = "errorbar", linewidth = 1, size = 1) +
+  geom_jitter(color = "#08306B", width = 0.1, size = 2, alpha = 1) +
+  scale_color_manual(values = c("I" = "#5E2B97", "II" = "#084081", 
+                                "III" = "#E6B85C","IV" = "#4E8216")) +
+  scale_fill_manual(values = c("I" = "#5E2B97", "II" = "#084081", 
+                                "III" = "#E6B85C","IV" = "#4E8216")) +
+  theme_bw() +
+  labs(x = "", y = "Inverse Simpson index") +
+  theme(panel.grid = element_blank(),
+        legend.position = "none",
+        legend.title = element_blank(),
+        axis.text.x = element_text(colour = "black", size = 10),
+        axis.text.y = element_text(size = 10),
+        strip.text.x = element_text(colour = "black", face = "bold", 
+                                    size = 10)) +
+  stat_compare_means(comparisons = my_comp, method = "wilcox.test", 
+                     label = "p.format", size = 4)
+
+# Boxplot
+plot_TNM = (p.richness_TNM + p.shannon_TNM + p.simpson_TNM) +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "right", 
+        legend.title = element_text(face = "bold", size = 12))
+print(plot_TNM)
+```
+
+# Beta diversity
+
+## Tissue type
+
+```{r message=FALSE, warning=FALSE, fig.width=12, fig.height=6}
+# Normalizing to relative abundance and extracting the transposed abundance matrix
+ps_rel_T = transform_sample_counts(ps_T, function(x) x / sum(x))
+
+# Extracting metadata
+metadata = data.frame(sample_data(ps_rel_T))
+
+# Calculating the Bray-Curtis dissimilarity matrix
+bray_curtis = phyloseq::distance(ps_rel_T, method = "bray")
+
+# Performing PCoA
+pcoa_result_bray = cmdscale(bray_curtis, k = 3, eig = TRUE)
+
+# Converting PCoA results into a dataframe and adding metadata
+pcoa_df_bray = as.data.frame(pcoa_result_bray$points)
+colnames(pcoa_df_bray) = c("PC1", "PC2", "PC3")
+pcoa_df_bray$Sample = row.names(pcoa_df_bray)
+pcoa_df_bray = merge(pcoa_df_bray, metadata, by.x = "Sample", by.y = "samples_diego")
+
+# Explained variance (Bray-Curtis)
+var_exp_bray = round(pcoa_result_bray$eig / sum(pcoa_result_bray$eig) * 100, 2)
+var_exp_bray[1:3]
+
+# Performing the PERMANOVA test and extracting R² and p-value
+permanova_result_bray = adonis2(bray_curtis ~ Tissue, data = metadata)
+r2_value = round(permanova_result_bray$R2[1], 3)
+p_value = round(permanova_result_bray$`Pr(>F)`[1], 3)
+
+# PCoA (Bray-Curtis)
+pcoa_bray = ggplot(pcoa_df_bray, aes(x = PC1, y = PC2, color = Tissue, fill = Tissue)) +
+  geom_point(size = 2, alpha = 1) +
+  stat_ellipse(aes(group = Tissue), level = 0.95, linewidth = 0.5) +
+  geom_vline(xintercept = 0, linetype = "dashed", linewidth = 0.4, color = "grey50") +
+  geom_hline(yintercept = 0, linetype = "dashed", linewidth = 0.4, color = "grey50") +
+  labs(title = "", x = paste0("PCoA1 (", round(pcoa_result_bray$eig[1] /
+                  sum(pcoa_result_bray$eig) * 100, 2), "%)"),
+                   y = paste0("PCoA2 (", round(pcoa_result_bray$eig[2] /
+                  sum(pcoa_result_bray$eig) * 100, 2), "%)")) +
+  scale_color_manual(values = c("GC" = "#67000D", "NT" = "#2B7A78")) +
+  scale_fill_manual(values = c("GC" = "#67000D", "NT" = "#2B7A78")) +
+  annotate("text", x = -Inf, y = Inf,
+    label = paste0("PERMANOVA:\nR² = ", r2_value,
+                   "\np = ", format.pval(p_value, digits = 3)), 
+    hjust = -0.1, vjust = 1.1, size = 4) +
+  theme_bw() +
+  theme(
+    panel.grid = element_blank(),
+    legend.position = c(0.98, 0.98), 
+    legend.justification = c(1, 1),
+    legend.text = element_text(size = 10),
+    legend.title = element_blank(),
+    legend.background = element_blank(),
+    legend.key = element_blank(),
+    axis.text.x = element_text(colour = "black", size = 10),
+    axis.text.y = element_text(size = 10),
+    strip.text.x = element_text(colour = "black", face = "bold", size = 10))
+
+# Calculating multivariate dispersion analysis (PERMDISP)
+permdisp = betadisper(bray_curtis, metadata$Tissue)
+permdisp_perm = permutest(permdisp, permutations = 999)
+
+# Extracting F and p values
+f_permdisp = permdisp_perm$tab[1, "F"]
+p_permdisp = permdisp_perm$tab[1, "Pr(>F)"]
+
+# Creating a dataframe with the centroids
+centroids = pcoa_df_bray %>%
+  group_by(Tissue) %>%
+  summarise(PC1 = mean(PC1), PC2 = mean(PC2))
+
+# Beta dispersion (Bray-Curtis)
+disp_bray = ggplot(pcoa_df_bray, aes(PC1, PC2, color = Tissue)) +
+  geom_point(size = 2, alpha = 1) +
+  geom_segment(data = pcoa_df_bray %>% 
+               left_join(centroids, by = "Tissue"), aes(x = PC1.x, y = PC2.x, 
+                                                        xend = PC1.y, yend = PC2.y, 
+                                                        color = Tissue), alpha = 0.3) +
+  geom_point(data = centroids, aes(PC1, PC2, color = Tissue), size = 2, shape = 4, stroke = 2.5) +
+  geom_vline(xintercept = 0, linetype = "dashed", linewidth = 0.4, color = "grey50") +
+  geom_hline(yintercept = 0, linetype = "dashed", linewidth = 0.4, color = "grey50") +
+  scale_color_manual(values = c("GC" = "#67000D", "NT" = "#2B7A78")) +
+  annotate("text", x = -Inf, y = Inf,
+    label = paste0("PERMDISP:\nF = ", formatC(f_permdisp, format = "f", digits = 3),
+                   "\np = ", format.pval(p_permdisp, digits = 3)), 
+                    hjust = -0.1, vjust = 1.1, size = 4) +
+  theme_bw() +
+  labs(x = "PCoA1", y = "PCoA2") +
+  theme(panel.grid = element_blank(),
+    legend.position = c(0.98, 0.98), 
+    legend.justification = c(1, 1),
+    legend.text = element_text(size = 10),
+    legend.title = element_blank(),
+    legend.background = element_blank(),
+    legend.key = element_blank(),
+    axis.text.x = element_text(colour = "black", size = 10),
+    axis.text.y = element_text(size = 10),
+    strip.text.x = element_text(colour = "black", face = "bold", size = 10))
+
+# PCoA + Beta dispersion
+beta_T = pcoa_bray + disp_bray + plot_layout(ncol = 2)
+print(beta_T)
+```
+
+## Lauren histological subtypes
+
+```{r message=FALSE, warning=FALSE, fig.width=12, fig.height=6}
+# Subsetting only samples with Lauren data
+ps_lauren = subset_samples(ps_T, Lauren %in% c("Intestinal", "Diffuse"))
+
+# Removing genera with zero reads
+ps_lauren = prune_taxa(taxa_sums(ps_lauren) > 0, ps_lauren)
+
+# Normalizing samples to relative abundance
+ps_rel_lauren = transform_sample_counts(ps_lauren, function(x) x / sum(x))
+
+# Extracting metadata
+metadata = data.frame(sample_data(ps_rel_lauren))
+
+# Calculating the Bray-Curtis dissimilarity matrix
+bray_curtis = phyloseq::distance(ps_rel_lauren, method = "bray")
+
+# Performing PCoA
+pcoa_result_bray = cmdscale(bray_curtis, k = 3, eig = TRUE)
+
+# Converting PCoA results into a dataframe and adding metadata
+pcoa_df_bray = as.data.frame(pcoa_result_bray$points)
+colnames(pcoa_df_bray) = c("PC1", "PC2", "PC3")
+pcoa_df_bray$Sample = row.names(pcoa_df_bray)
+pcoa_df_bray = merge(pcoa_df_bray, metadata, by.x = "Sample", by.y = "samples_diego")
+
+# Explained variance (Bray-Curtis)
+var_exp_bray = round(pcoa_result_bray$eig / sum(pcoa_result_bray$eig) * 100, 2)
+var_exp_bray[1:3]
+
+# Performing the PERMANOVA test and extracting R² and p-value
+permanova_result_bray = adonis2(bray_curtis ~ Lauren, data = metadata)
+r2_value = round(permanova_result_bray$R2[1], 3)
+p_value = round(permanova_result_bray$`Pr(>F)`[1], 3)
+
+# PCoA (Bray-Curtis)
+pcoa_bray = ggplot(pcoa_df_bray, aes(x = PC1, y = PC2, color = Lauren, fill = Lauren)) +
+  geom_point(size = 2, alpha = 1) +
+  stat_ellipse(aes(group = Lauren), level = 0.95, linewidth = 0.5) +
+  geom_vline(xintercept = 0, linetype = "dashed", linewidth = 0.4, color = "grey50") +
+  geom_hline(yintercept = 0, linetype = "dashed", linewidth = 0.4, color = "grey50") +
+  labs(title = "", x = paste0("PCoA1 (", round(pcoa_result_bray$eig[1] /
+                  sum(pcoa_result_bray$eig) * 100, 2), "%)"),
+                   y = paste0("PCoA2 (", round(pcoa_result_bray$eig[2] /
+                  sum(pcoa_result_bray$eig) * 100, 2), "%)")) +
+  scale_color_manual(values = c("Intestinal" = "#3E7C93", "Diffuse" = "orange4")) +
+  scale_fill_manual(values = c("Intestinal" = "#3E7C93", "Diffuse" = "orange4")) +
+  annotate("text", x = -Inf, y = Inf,
+    label = paste0("PERMANOVA:\nR² = ", r2_value,
+                   "\np = ", format.pval(p_value, digits = 3)), 
+    hjust = -0.1, vjust = 1.1, size = 4) +
+  theme_bw() +
+  theme(
+    panel.grid = element_blank(),
+    legend.position = c(0.98, 0.98), 
+    legend.justification = c(1, 1),,
+    legend.text = element_text(size = 10),
+    legend.title = element_blank(),
+    legend.background = element_blank(),
+    legend.key = element_blank(),
+    axis.text.x = element_text(colour = "black", size = 10),
+    axis.text.y = element_text(size = 10),
+    strip.text.x = element_text(colour = "black", face = "bold", size = 10))
+
+# Calculating multivariate dispersion analysis (PERMDISP)
+permdisp = betadisper(bray_curtis, metadata$Lauren)
+permdisp_perm = permutest(permdisp, permutations = 999)
+
+# Extracting F and p values
+f_permdisp = permdisp_perm$tab[1, "F"]
+p_permdisp = permdisp_perm$tab[1, "Pr(>F)"]
+
+# Creating a dataframe with the centroids
+centroids = pcoa_df_bray %>%
+  group_by(Lauren) %>%
+  summarise(PC1 = mean(PC1), PC2 = mean(PC2))
+
+# Beta dispersion (Bray-Curtis)
+disp_bray = ggplot(pcoa_df_bray, aes(PC1, PC2, color = Lauren)) +
+  geom_point(size = 2, alpha = 1) +
+  geom_segment(data = pcoa_df_bray %>%
+               left_join(centroids, by = "Lauren"), aes(x = PC1.x, y = PC2.x,
+                                                        xend = PC1.y, yend = PC2.y,
+                                                        color = Lauren), alpha = 0.3) +
+  geom_point(data = centroids, aes(PC1, PC2, color = Lauren), size = 2, shape = 4, stroke = 2.5) +
+  geom_vline(xintercept = 0, linetype = "dashed", linewidth = 0.4, color = "grey50") +
+  geom_hline(yintercept = 0, linetype = "dashed", linewidth = 0.4, color = "grey50") +
+  scale_color_manual(values = c("Intestinal" = "#3E7C93", "Diffuse" = "orange4")) +
+  annotate("text", x = -Inf, y = Inf,
+    label = paste0("PERMDISP:\nF = ", formatC(f_permdisp, format = "f", digits = 3),
+                   "\np = ", format.pval(p_permdisp, digits = 3)),
+                    hjust = -0.1, vjust = 1.1, size = 4) +
+  theme_bw() +
+  labs(x = "PCoA1", y = "PCoA2") +
+  theme(panel.grid = element_blank(),
+    legend.position = c(0.98, 0.98), 
+    legend.justification = c(1, 1),,
+    legend.text = element_text(size = 10),
+    legend.title = element_blank(),
+    legend.background = element_blank(),
+    legend.key = element_blank(),
+    axis.text.x = element_text(colour = "black", size = 10),
+    axis.text.y = element_text(size = 10),
+    strip.text.x = element_text(colour = "black", face = "bold", size = 10))
+
+# PCoA + Beta dispersion
+beta_lauren = pcoa_bray + disp_bray + plot_layout(ncol = 2)
+print(beta_lauren)
+```
+
+## Neoadjuvant chemotherapy
+
+```{r message=FALSE, warning=FALSE, fig.width=12, fig.height=6}
+# Subsetting only samples with neoadjuvant chemotherapy data
+ps_neo = subset_samples(ps_T, Neoadjuvant %in% c("Treated", "Untreated"))
+
+# Removing genera with zero reads
+ps_neo = prune_taxa(taxa_sums(ps_neo) > 0, ps_neo)
+
+# Normalizing samples to relative abundance
+ps_rel_neo = transform_sample_counts(ps_neo, function(x) x / sum(x))
+
+# Extracting metadata
+metadata = data.frame(sample_data(ps_rel_neo))
+
+# Calculating the Bray-Curtis dissimilarity matrix
+bray_curtis = phyloseq::distance(ps_rel_neo, method = "bray")
+
+# Performing PCoA
+pcoa_result_bray = cmdscale(bray_curtis, k = 3, eig = TRUE)
+
+# Converting PCoA results into a dataframe and adding metadata
+pcoa_df_bray = as.data.frame(pcoa_result_bray$points)
+colnames(pcoa_df_bray) = c("PC1", "PC2", "PC3")
+pcoa_df_bray$Sample = row.names(pcoa_df_bray)
+pcoa_df_bray = merge(pcoa_df_bray, metadata, by.x = "Sample", by.y = "samples_diego")
+
+# Explained variance (Bray-Curtis)
+var_exp_bray = round(pcoa_result_bray$eig / sum(pcoa_result_bray$eig) * 100, 2)
+var_exp_bray[1:3]
+
+# Performing the PERMANOVA test and extracting R² and p-value
+permanova_result_bray = adonis2(bray_curtis ~ Neoadjuvant, data = metadata)
+r2_value = round(permanova_result_bray$R2[1], 3)
+p_value = round(permanova_result_bray$`Pr(>F)`[1], 3)
+
+# PCoA (Bray-Curtis)
+pcoa_bray = ggplot(pcoa_df_bray, aes(x = PC1, y = PC2, color = Neoadjuvant, fill = Neoadjuvant)) +
+  geom_point(size = 2, alpha = 1) +
+  stat_ellipse(aes(group = Neoadjuvant), level = 0.95, linewidth = 0.5) +
+  geom_vline(xintercept = 0, linetype = "dashed", linewidth = 0.4, color = "grey50") +
+  geom_hline(yintercept = 0, linetype = "dashed", linewidth = 0.4, color = "grey50") +
+  labs(title = "", x = paste0("PCoA1 (", round(pcoa_result_bray$eig[1] /
+                  sum(pcoa_result_bray$eig) * 100, 2), "%)"),
+                   y = paste0("PCoA2 (", round(pcoa_result_bray$eig[2] /
+                  sum(pcoa_result_bray$eig) * 100, 2), "%)")) +
+  scale_color_manual(values = c("Treated" = "#0868AC", "Untreated" = "#A50F15")) +
+  scale_fill_manual(values = c("Treated" = "#0868AC", "Untreated" = "#A50F15")) +
+  annotate("text", x = -Inf, y = Inf,
+    label = paste0("PERMANOVA:\nR² = ", r2_value,
+                   "\np = ", format.pval(p_value, digits = 3)), 
+    hjust = -0.1, vjust = 1.1, size = 4) +
+  theme_bw() +
+  theme(
+    panel.grid = element_blank(),
+    legend.position = c(0.98, 0.98), 
+    legend.justification = c(1, 1),,
+    legend.text = element_text(size = 10),
+    legend.title = element_blank(),
+    legend.background = element_blank(),
+    legend.key = element_blank(),
+    axis.text.x = element_text(colour = "black", size = 10),
+    axis.text.y = element_text(size = 10),
+    strip.text.x = element_text(colour = "black", face = "bold", size = 10))
+
+# Calculating multivariate dispersion analysis (PERMDISP)
+permdisp = betadisper(bray_curtis, metadata$Neoadjuvant)
+permdisp_perm = permutest(permdisp, permutations = 999)
+
+# Extracting F and p values
+f_permdisp = permdisp_perm$tab[1, "F"]
+p_permdisp = permdisp_perm$tab[1, "Pr(>F)"]
+
+# Creating a dataframe with the centroids
+centroids = pcoa_df_bray %>%
+  group_by(Neoadjuvant) %>%
+  summarise(PC1 = mean(PC1), PC2 = mean(PC2))
+
+# Beta dispersion (Bray-Curtis)
+disp_bray = ggplot(pcoa_df_bray, aes(PC1, PC2, color = Neoadjuvant)) +
+  geom_point(size = 2, alpha = 1) +
+  geom_segment(data = pcoa_df_bray %>%
+               left_join(centroids, by = "Neoadjuvant"), aes(x = PC1.x, y = PC2.x,
+                                                              xend = PC1.y, yend = PC2.y,
+                                                              color = Neoadjuvant), alpha = 0.3) +
+  geom_point(data = centroids, aes(PC1, PC2, color = Neoadjuvant), size = 2, shape = 4, stroke = 2.5) +
+  geom_vline(xintercept = 0, linetype = "dashed", linewidth = 0.4, color = "grey50") +
+  geom_hline(yintercept = 0, linetype = "dashed", linewidth = 0.4, color = "grey50") +
+  scale_color_manual(values = c("Treated" = "#0868AC", "Untreated" = "#A50F15")) +
+  annotate("text", x = -Inf, y = Inf,
+    label = paste0("PERMDISP:\nF = ", formatC(f_permdisp, format = "f", digits = 3),
+                   "\np = ", format.pval(p_permdisp, digits = 3)),
+                    hjust = -0.1, vjust = 1.1, size = 4) +
+  theme_bw() +
+  labs(x = "PCoA1", y = "PCoA2") +
+  theme(panel.grid = element_blank(),
+    legend.position = c(0.98, 0.98), 
+    legend.justification = c(1, 1),,
+    legend.text = element_text(size = 10),
+    legend.title = element_blank(),
+    legend.background = element_blank(),
+    legend.key = element_blank(),
+    axis.text.x = element_text(colour = "black", size = 10),
+    axis.text.y = element_text(size = 10),
+    strip.text.x = element_text(colour = "black", face = "bold", size = 10))
+
+# PCoA + Beta dispersion
+beta_neo = pcoa_bray + disp_bray + plot_layout(ncol = 2)
+print(beta_neo)
+```
+
+## Tumor location
+
+```{r message=FALSE, warning=FALSE, fig.width=12, fig.height=6}
+# Subsetting only samples with tumor location data
+ps_site = subset_samples(ps_T, Tumor_site %in% c("Cardia", "Non-Cardia"))
+
+# Removing genera with zero reads
+ps_site = prune_taxa(taxa_sums(ps_site) > 0, ps_site)
+
+# Normalizing samples to relative abundance
+ps_rel_site = transform_sample_counts(ps_site, function(x) x / sum(x))
+
+# Extracting metadata
+metadata = data.frame(sample_data(ps_rel_site))
+
+# Calculating the Bray-Curtis dissimilarity matrix
+bray_curtis = phyloseq::distance(ps_rel_site, method = "bray")
+
+# Performing PCoA
+pcoa_result_bray = cmdscale(bray_curtis, k = 3, eig = TRUE)
+
+# Converting PCoA results into a dataframe and adding metadata
+pcoa_df_bray = as.data.frame(pcoa_result_bray$points)
+colnames(pcoa_df_bray) = c("PC1", "PC2", "PC3")
+pcoa_df_bray$Sample = row.names(pcoa_df_bray)
+pcoa_df_bray = merge(pcoa_df_bray, metadata, by.x = "Sample", by.y = "samples_diego")
+
+# Explained variance (Bray-Curtis)
+var_exp_bray = round(pcoa_result_bray$eig / sum(pcoa_result_bray$eig) * 100, 2)
+var_exp_bray[1:3]
+
+# Performing the PERMANOVA test and extracting R² and p-value
+permanova_result_bray = adonis2(bray_curtis ~ Tumor_site, data = metadata)
+r2_value = round(permanova_result_bray$R2[1], 3)
+p_value = round(permanova_result_bray$`Pr(>F)`[1], 3)
+
+# PCoA (Bray-Curtis)
+pcoa_bray = ggplot(pcoa_df_bray, aes(x = PC1, y = PC2, color = Tumor_site, fill = Tumor_site)) +
+  geom_point(size = 2, alpha = 1) +
+  stat_ellipse(aes(group = Tumor_site), level = 0.95, linewidth = 0.5) +
+  geom_vline(xintercept = 0, linetype = "dashed", linewidth = 0.4, color = "grey50") +
+  geom_hline(yintercept = 0, linetype = "dashed", linewidth = 0.4, color = "grey50") +
+  labs(title = "", x = paste0("PCoA1 (", round(pcoa_result_bray$eig[1] /
+                  sum(pcoa_result_bray$eig) * 100, 2), "%)"),
+                   y = paste0("PCoA2 (", round(pcoa_result_bray$eig[2] /
+                  sum(pcoa_result_bray$eig) * 100, 2), "%)")) +
+  scale_color_manual(values = c("Cardia" = "#B45309", "Non-Cardia" = "#006D2C")) +
+  scale_fill_manual(values = c("Cardia" = "#B45309", "Non-Cardia" = "#006D2C")) +
+  annotate("text", x = -Inf, y = Inf,
+    label = paste0("PERMANOVA:\nR² = ", r2_value,
+                   "\np = ", format.pval(p_value, digits = 3)), 
+    hjust = -0.1, vjust = 1.1, size = 4) +
+  theme_bw() +
+  theme(
+    panel.grid = element_blank(),
+    legend.position = c(0.98, 0.98), 
+    legend.justification = c(1, 1),,
+    legend.text = element_text(size = 10),
+    legend.title = element_blank(),
+    legend.background = element_blank(),
+    legend.key = element_blank(),
+    axis.text.x = element_text(colour = "black", size = 10),
+    axis.text.y = element_text(size = 10),
+    strip.text.x = element_text(colour = "black", face = "bold", size = 10))
+
+# Calculating multivariate dispersion analysis (PERMDISP)
+permdisp = betadisper(bray_curtis, metadata$Tumor_site)
+permdisp_perm = permutest(permdisp, permutations = 999)
+
+# Extracting F and p values
+f_permdisp = permdisp_perm$tab[1, "F"]
+p_permdisp = permdisp_perm$tab[1, "Pr(>F)"]
+
+# Creating a dataframe with the centroids
+centroids = pcoa_df_bray %>%
+  group_by(Tumor_site) %>%
+  summarise(PC1 = mean(PC1), PC2 = mean(PC2))
+
+# Beta dispersion (Bray-Curtis)
+disp_bray = ggplot(pcoa_df_bray, aes(PC1, PC2, color = Tumor_site)) +
+  geom_point(size = 2, alpha = 1) +
+  geom_segment(data = pcoa_df_bray %>%
+               left_join(centroids, by = "Tumor_site"), aes(x = PC1.x, y = PC2.x,
+                                                              xend = PC1.y, yend = PC2.y,
+                                                              color = Tumor_site), alpha = 0.3) +
+  geom_point(data = centroids, aes(PC1, PC2, color = Tumor_site), size = 2, shape = 4, stroke = 2.5) +
+  geom_vline(xintercept = 0, linetype = "dashed", linewidth = 0.4, color = "grey50") +
+  geom_hline(yintercept = 0, linetype = "dashed", linewidth = 0.4, color = "grey50") +
+  scale_color_manual(values = c("Cardia" = "#B45309", "Non-Cardia" = "#006D2C")) +
+  annotate("text", x = -Inf, y = Inf,
+    label = paste0("PERMDISP:\nF = ", formatC(f_permdisp, format = "f", digits = 3),
+                   "\np = ", format.pval(p_permdisp, digits = 3)),
+                    hjust = -0.1, vjust = 1.1, size = 4) +
+  theme_bw() +
+  labs(x = "PCoA1", y = "PCoA2") +
+  theme(panel.grid = element_blank(),
+    legend.position = c(0.98, 0.98), 
+    legend.justification = c(1, 1),,
+    legend.text = element_text(size = 10),
+    legend.title = element_blank(),
+    legend.background = element_blank(),
+    legend.key = element_blank(),
+    axis.text.x = element_text(colour = "black", size = 10),
+    axis.text.y = element_text(size = 10),
+    strip.text.x = element_text(colour = "black", face = "bold", size = 10))
+
+# PCoA + Beta dispersion
+beta_site = pcoa_bray + disp_bray + plot_layout(ncol = 2)
+print(beta_site)
+```
+
+## Clinical staging (cTNM)
+
+```{r message=FALSE, warning=FALSE, fig.width=12, fig.height=6}
+# Subsetting only samples with cTNM data
+ps_TNM = subset_samples(ps_T, TNM %in% c("I", "II", "III", "IV"))
+
+# Removing genera with zero reads
+ps_TNM = prune_taxa(taxa_sums(ps_TNM) > 0, ps_TNM)
+
+# Normalizing samples to relative abundance
+ps_rel_TNM = transform_sample_counts(ps_TNM, function(x) x / sum(x))
+
+# Extracting metadata
+metadata = data.frame(sample_data(ps_rel_TNM))
+
+# Calculating the Bray-Curtis dissimilarity matrix
+bray_curtis = phyloseq::distance(ps_rel_TNM, method = "bray")
+
+# Performing PCoA
+pcoa_result_bray = cmdscale(bray_curtis, k = 3, eig = TRUE)
+
+# Converting PCoA results into a dataframe and adding metadata
+pcoa_df_bray = as.data.frame(pcoa_result_bray$points)
+colnames(pcoa_df_bray) = c("PC1", "PC2", "PC3")
+pcoa_df_bray$Sample = row.names(pcoa_df_bray)
+pcoa_df_bray = merge(pcoa_df_bray, metadata, by.x = "Sample", by.y = "samples_diego")
+
+# Explained variance (Bray-Curtis)
+var_exp_bray = round(pcoa_result_bray$eig / sum(pcoa_result_bray$eig) * 100, 2)
+var_exp_bray[1:3]
+
+# Performing the PERMANOVA test and extracting R² and p-value
+permanova_result_bray = adonis2(bray_curtis ~ TNM, data = metadata)
+r2_value = round(permanova_result_bray$R2[1], 3)
+p_value = round(permanova_result_bray$`Pr(>F)`[1], 3)
+
+# PCoA (Bray-Curtis)
+pcoa_bray = ggplot(pcoa_df_bray, aes(x = PC1, y = PC2, color = TNM, fill = TNM)) +
+  geom_point(size = 2, alpha = 1) +
+  stat_ellipse(aes(group = TNM), level = 0.95, linewidth = 0.5) +
+  geom_vline(xintercept = 0, linetype = "dashed", linewidth = 0.4, color = "grey50") +
+  geom_hline(yintercept = 0, linetype = "dashed", linewidth = 0.4, color = "grey50") +
+  labs(title = "", x = paste0("PCoA1 (", round(pcoa_result_bray$eig[1] /
+                  sum(pcoa_result_bray$eig) * 100, 2), "%)"),
+                   y = paste0("PCoA2 (", round(pcoa_result_bray$eig[2] /
+                  sum(pcoa_result_bray$eig) * 100, 2), "%)")) +
+  scale_color_manual(values = c("I" = "#5E2B97", "II" = "#084081", 
+                                "III" = "#E6B85C","IV" = "#4E8216")) +
+  scale_fill_manual(values = c("I" = "#5E2B97", "II" = "#084081", 
+                                "III" = "#E6B85C","IV" = "#4E8216")) +
+  annotate("text", x = -Inf, y = Inf,
+    label = paste0("PERMANOVA:\nR² = ", r2_value,
+                   "\np = ", format.pval(p_value, digits = 3)), 
+    hjust = -0.1, vjust = 1.1, size = 4) +
+  theme_bw() +
+  theme(
+    panel.grid = element_blank(),
+    legend.position = c(0.98, 0.98), 
+    legend.justification = c(1, 1),,
+    legend.text = element_text(size = 10),
+    legend.title = element_blank(),
+    legend.background = element_blank(),
+    legend.key = element_blank(),
+    axis.text.x = element_text(colour = "black", size = 10),
+    axis.text.y = element_text(size = 10),
+    strip.text.x = element_text(colour = "black", face = "bold", size = 10))
+
+# Calculating multivariate dispersion analysis (PERMDISP)
+permdisp = betadisper(bray_curtis, metadata$TNM)
+permdisp_perm = permutest(permdisp, permutations = 999)
+
+# Extracting F and p values
+f_permdisp = permdisp_perm$tab[1, "F"]
+p_permdisp = permdisp_perm$tab[1, "Pr(>F)"]
+
+# Creating a dataframe with the centroids
+centroids = pcoa_df_bray %>%
+  group_by(TNM) %>%
+  summarise(PC1 = mean(PC1), PC2 = mean(PC2))
+
+# Beta dispersion (Bray-Curtis)
+disp_bray = ggplot(pcoa_df_bray, aes(PC1, PC2, color = TNM)) +
+  geom_point(size = 2, alpha = 1) +
+  geom_segment(data = pcoa_df_bray %>%
+               left_join(centroids, by = "TNM"), aes(x = PC1.x, y = PC2.x,
+                                                      xend = PC1.y, yend = PC2.y,
+                                                      color = TNM), alpha = 0.3) +
+  geom_point(data = centroids, aes(PC1, PC2, color = TNM), size = 2, shape = 4, stroke = 2.5) +
+  geom_vline(xintercept = 0, linetype = "dashed", linewidth = 0.4, color = "grey50") +
+  geom_hline(yintercept = 0, linetype = "dashed", linewidth = 0.4, color = "grey50") +
+  scale_color_manual(values = c("I" = "#5E2B97", "II" = "#084081", 
+                                "III" = "#E6B85C","IV" = "#4E8216")) +
+  annotate("text", x = -Inf, y = Inf,
+    label = paste0("PERMDISP:\nF = ", formatC(f_permdisp, format = "f", digits = 3),
+                   "\np = ", format.pval(p_permdisp, digits = 3)),
+                    hjust = -0.1, vjust = 1.1, size = 4) +
+  theme_bw() +
+  labs(x = "PCoA1", y = "PCoA2") +
+  theme(panel.grid = element_blank(),
+    legend.position = c(0.98, 0.98), 
+    legend.justification = c(1, 1),,
+    legend.text = element_text(size = 10),
+    legend.title = element_blank(),
+    legend.background = element_blank(),
+    legend.key = element_blank(),
+    axis.text.x = element_text(colour = "black", size = 10),
+    axis.text.y = element_text(size = 10),
+    strip.text.x = element_text(colour = "black", face = "bold", size = 10))
+
+# PCoA + Beta dispersion
+beta_TNM = pcoa_bray + disp_bray + plot_layout(ncol = 2)
+print(beta_TNM)
+```
